@@ -1,13 +1,23 @@
 # MagicOriG
 
-为 **NickHCK YuanDao OriG in** 耳机接入 **MagicOS / HarmonyOS** 的 LSPosed 模块。
+为 **NickHCK YuanDao OriG in** 耳机接入 **荣耀 MagicOS** 的 LSPosed 模块。
 
-基于 [HyperOriG](https://github.com/KiriChen-Wind/HyperOriG) 移植，适配华为 MagicOS 系统架构。
+基于 [HyperOriG](https://github.com/KiriChen-Wind/HyperOriG) 移植，适配荣耀 MagicOS 系统架构。
+
+> ## ⚠️ 支持范围声明
+>
+> **本项目仅面向荣耀（HONOR）的 MagicOS，不为华为（HUAWEI）系统提供任何修改。**
+>
+> - 不适配华为 HarmonyOS / HarmonyOS NEXT，也不针对华为设备做任何改动
+> - 不包含、不依赖、不兼容 HMS / 华为自有蓝牙组件
+> - 文档、脚本与 hook 目标均以荣耀 MagicOS 为唯一目标；在华为系统上**不提供支持，也未做过验证**
+>
+> 出现于历史文档中的 "HarmonyOS" 字样均为早期描述遗留，不代表本项目支持华为系统。
 
 ## 系统要求
 
+- **系统**：荣耀 **MagicOS**（Android 14+）
 - **LSPosed**：需 Zygisk 模式
-- **Android 版本**：Android 14+（MagicOS 8 / HarmonyOS NEXT）
 - **Root 权限**：需要（用于作用域管理）
 - **LSPosed API**：101+
 
@@ -15,6 +25,7 @@
 
 - [HyperOriG](https://github.com/KiriChen-Wind/HyperOriG) — 原始 HyperOS 适配版（核心 RFCOMM/电量/ANC 逻辑）
 - [LibXposed API](https://github.com/libxposed/api) — 现代 LSPosed 接口
+- [miuix](https://compose-miuix-ui.github.io/miuix/zh_CN/) — UI 风格参考
 
 ## 功能
 
@@ -103,9 +114,31 @@ powershell -ExecutionPolicy Bypass -File tools\verify-lsposed-module.ps1 -Apk ap
 5. 配对 OriG in 耳机（识别名含 YUANDAO / OriG / NiceHCK）
 6. 打开本模块设置页面调整配置
 
-## MagicOS 适配（未完成）
+## 降噪面板接入（已完成）
 
-现有 hook 目标全部来自 HyperOriG（小米 HyperOS），在 MagicOS 上会**静默失败**（全部被 `runCatching` 吞掉）：
+第三方耳机（原道 OriG in）现在可以像荣耀自家耳机一样，在蓝牙设置详情页里调节降噪。
+
+```
+设置详情页 [噪声控制: 降噪 / 透传 / 关闭]
+  → NoiseControlController.displayPreference        （x7.a.r() 强制可用后才 add）
+  → MultiStateSwitchingPanelPreference.onClick
+  → NoiseControlPanelController.onMultiStateClicked(index, mode)
+  → 广播 com.redwind.magicorig.ACTION_ANC_SELECT (status)
+  → RfcommController.setANCMode()   [com.android.bluetooth 进程]
+  → SPP 0x4E 帧 → 耳机切换
+```
+
+| UI 按钮 | status | `AncMode` | SPP 帧字节 |
+|---------|--------|-----------|-----------|
+| 降噪 | 5 | `EXPERIMENT` | `4E 05 00 00 01 02 10 00` |
+| 透传 | 2 | `TRANSPARENT` | `4E 05 00 00 01 02 01 00` |
+| 关闭 | 1 | `OFF` | `4E 05 00 00 01 02 00 00` |
+
+完整逆向过程与排障清单见 [docs/magicos11-integration.md](docs/magicos11-integration.md)。
+
+### 已被替换的 MIUI/HyperOS 目标
+
+原始 hook 目标全部来自 HyperOriG（小米 HyperOS），在 MagicOS 上会**静默失败**（被 `runCatching` 吞掉）：
 
 | hook 目标 | 归属 |
 |-----------|------|
@@ -114,15 +147,12 @@ powershell -ExecutionPolicy Bypass -File tools\verify-lsposed-module.ps1 -Apk ap
 | `com.android.bluetooth.ble.app.MiuiBluetoothNotification` | MIUI |
 | `com.android.bluetooth.ble.app.IMiuiHeadsetCallback` | MIUI |
 
-要接上荣耀的降噪面板，必须先拿到 MagicOS 上真实的类名：
+定位 MagicOS 真实类名的探测脚本（可重跑）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\discover-magicos-headset.ps1
 powershell -ExecutionPolicy Bypass -File tools\discover-magicos-headset.ps1 -Package com.android.settings
 ```
-
-脚本会把系统 Settings/蓝牙 APK 拉下来、解出 `classes*.dex` 并扫描耳机/降噪相关关键字，
-命中结果替换掉 `HookEntry.kt` / `BluetoothUpstreamHeadsetHook.kt` 里的 MIUI 目标。
 
 ## 调试
 
