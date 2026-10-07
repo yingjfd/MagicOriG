@@ -1,0 +1,58 @@
+# Build outputs
+build/
+app/build/
+.gradle/
+*.aab
+*.apk
+*.ap_
+*.dex
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+
+# Android Studio
+AndroidManifest.xml.bak
+manifest-merger-*-report.txt
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Gradle wrapper
+# gradle-wrapper.jar 必须随仓库提交，否则新克隆后 gradlew 无法启动
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# Keystore
+*.jks
+*.keystore
+key.properties
+local.properties
+
+# Kotlin
+*.class
+*.kt_bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# 本地探测产物（tools/discover-magicos-headset.ps1 生成，可随时重跑）
+discovery/
+build/
+lsp-manager.apk
+*.png
+
+# 调试探针产物（dumpsys / bt_config 导出 / uiautomator dump，含配对设备 MAC）
+bm*.txt
+btc.txt
+ui.xml

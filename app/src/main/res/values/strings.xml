@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">MagicOriG</string>
+    <string name="app_subtitle">为 NickHCK YuanDao OriG in 耳机接入 MagicOS</string>
+
+    <!-- 作用域 -->
+    <string-array name="xposedscope">
+        <item>com.android.bluetooth</item>
+        <item>com.android.systemui</item>
+        <item>com.android.settings</item>
+        <!-- 荣耀耳机面板（电量/降噪 UI 所在进程）。
+             现代模块只读 META-INF/xposed/scope.list，此处仅为旧式回退保持一致。 -->
+        <item>com.hihonor.audioaccessorymanager</item>
+    </string-array>
+</resources>

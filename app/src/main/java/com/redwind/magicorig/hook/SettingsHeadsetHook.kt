@@ -1,0 +1,504 @@
+package com.redwind.magicorig.hook
+
+import android.content.SharedPreferences
+import io.github.libxposed.service.XposedService
+import com.redwind.magicorig.config.ConfigManager
+
+/**
+ * SettingsHeadsetHook — 阻止系统设置中将 OriG 识别为小米耳机。
+ * 从 HyperOriG 完整移植。
+ */
+object SettingsHeadsetHook : HookContext() {
+    private const val TAG = "MagicOriG-Settings"
+
+    override fun onHook() {
+        // HeadsetIDConstants 是 MIUI/HyperOS 专有类。真机 dexdump 确认 MagicOS 11 的
+        // com.android.settings 里根本没有它（实际只有 TypecEarPhoneController /
+        // SmartEarphoneImp / DeviceEarphoneCfgObserver），所以原实现永远走
+        // runCatching 静默跳过，看起来 onHook OK，实际一行代码都没挂钩。
+        // 这里改成先探测类是否存在，再决定是否挂钩，并把结果打到 LSPosed 日志。
+        val targetClass = "com.android.settings.bluetooth.HeadsetIDConstants"
+        // 注意：这里不能用 .onFailure { ...; return } —— 那是非局部 return，
+        // 会直接退出整个 onHook()，导致后面所有 hook 都装不上（真机踩过）。
+        val legacyPresent = runCatching { findClass(targetClass) }.isSuccess
+        if (legacyPresent) {
+            runCatching {
+                val method = findMethod(targetClass, "checkSupport", String::class.java)
+                module.hook(method).intercept { chain ->
+                    val original = chain.proceed()
+                    val support = chain.args.getOrNull(0) as? String
+                    val fakeId = fakeDeviceId()
+                    if (support != null && (support.startsWith(fakeId) || support.contains(fakeId))) {
+                        Log.i(TAG, "checkSupport blocked fakeId=$fakeId support=$support")
+                        false
+                    } else original
+                }
+                Log.i(TAG, "checkSupport hook installed on $targetClass")
+            }.onFailure { Log.w(TAG, "checkSupport hook failed: ${it.javaClass.simpleName}") }
+        } else {
+            Log.w(TAG, "target class absent on this ROM: $targetClass — hook not installed")
+        }
+
+        // ── 荣耀降噪 UI：强制可用 ────────────────────────────────────
+        // MagicOS Settings 里降噪 Controller 全套存在，只是没对我们设备启用：
+        //   hwcontrollers/ancsettings/AncSwitchController
+        //   hwcontrollers/profilesettings/NoiseControlController
+        //   hwcontrollers/profilesettings/NoiseControlPanelController
+        // 每个都带标准 Settings 门面 getAvailabilityStatus()（返回 int，AVAILABLE=0）。
+        val ancTargets = listOf(
+            "com.android.settings.bluetooth.hwcontrollers.ancsettings.AncSwitchController",
+            "com.android.settings.bluetooth.hwcontrollers.profilesettings.NoiseControlController",
+            "com.android.settings.bluetooth.hwcontrollers.profilesettings.NoiseControlPanelController"
+        )
+        for (cls in ancTargets) {
+            runCatching {
+                val clazz = findClass(cls)
+                val methods = clazz.declaredMethods.filter {
+                    it.name == "getAvailabilityStatus" && it.parameterCount == 0
+                }
+                if (methods.isEmpty()) throw NoSuchMethodException("no getAvailabilityStatus")
+                for (m in methods) {
+                    if (m.returnType != Int::class.javaPrimitiveType) {
+                        Log.w(TAG, "skip ${cls.substringAfterLast('.')}.getAvailabilityStatus 返回 ${m.returnType}")
+                        continue
+                    }
+                    m.isAccessible = true
+                    module.hook(m).intercept {
+                        Log.i(TAG, "强制可用: ${cls.substringAfterLast('.')}")
+                        0 // AvailabilityStatus.AVAILABLE
+                    }
+                }
+                Log.i(TAG, "installed: ${cls.substringAfterLast('.')} 强制可用")
+
+                // 反汇编确认 DeviceProfilesSettings.onCreate 确实 new-instance 了
+                // NoiseControlController / NoiseControlPanelController，并在 b3/j3 里调
+                // displayPreference()。但 getAvailabilityStatus 从未触发 ——
+                // 加这个观察点区分「controller 没进页面」还是「可用性门在别处」。
+                clazz.declaredMethods.filter { it.name == "displayPreference" }
+                    .forEach { m ->
+                        m.isAccessible = true
+                        module.hook(m).intercept { chain ->
+                            Log.i(TAG, "displayPreference 被调用: ${cls.substringAfterLast('.')}")
+                            chain.proceed()
+                        }
+                        Log.i(TAG, "installed: ${cls.substringAfterLast('.')} displayPreference 观察")
+                    }
+            }.onFailure {
+                Log.w(TAG, "install ANC failed ${cls.substringAfterLast('.')}: ${it.javaClass.simpleName}: ${it.message}")
+            }
+        }
+
+        // ── 观察点：降噪行的触发 Runnable（是否被调度）────
+        // 反汇编确认 displayPreference 的唯一调用链是这两个 lambda：
+        //   DeviceProfilesSettings$$ExternalSyntheticLambda2.run → M2([B) → j3 → displayPreference
+        //   DeviceProfilesSettings$a$a.run                      → P2(String) → b3 → displayPreference
+        val runnables = listOf(
+            "com.android.settings.bluetooth.DeviceProfilesSettings\$\$ExternalSyntheticLambda2",
+            "com.android.settings.bluetooth.DeviceProfilesSettings\$a\$a"
+        )
+        for (cls in runnables) {
+            runCatching {
+                val m = findClass(cls).getDeclaredMethod("run").apply { isAccessible = true }
+                module.hook(m).intercept { chain ->
+                    Log.w(TAG, "降噪 Runnable 被执行: ${cls.substringAfterLast('.')}")
+                    chain.proceed()
+                }
+                Log.i(TAG, "installed: 降噪 Runnable 观察 ${cls.substringAfterLast('.')}")
+            }.onFailure {
+                Log.w(TAG, "install Runnable failed ${cls.substringAfterLast('.')}: ${it.javaClass.simpleName}: ${it.message}")
+            }
+        }
+
+        // ── 最终触发点：DeviceProfilesSettings$a.onGetDataSucceed ─────────
+        // 反汇编：DeviceProfilesSettings.<init> 偏移0034 new DeviceProfilesSettings$a
+        //   $a 实现数据监听：onGetDataFailed(String)/onGetDataSucceed(String)/onSetConfig*
+        //   onGetDataSucceed 内 new $a$a → P2(String) → b3 → NoiseControlController.displayPreference
+        // 数据查询失败(2001) 时它永不触发 → 降噪行永不出现。
+        // 策略：捕获 $a 实例 → 观察自然触发 → 页面 onCreate 后延迟主动调用一次。
+        runCatching {
+            val fragCls = findClass("com.android.settings.bluetooth.DeviceProfilesSettings")
+            val listenerCls = findClass("com.android.settings.bluetooth.DeviceProfilesSettings\$a")
+
+            // 1) 捕获实例（<init> 里 new 的那个）
+            val ctor = listenerCls.declaredConstructors.first()
+            ctor.isAccessible = true
+            module.hook(ctor).intercept { chain ->
+                capturedListener = chain.thisObject
+                Log.i(TAG, "捕获 \$a 实例 @${System.identityHashCode(chain.thisObject)}")
+                chain.proceed()
+            }
+
+            // 2) 观察自然触发
+            val ok = listenerCls.getDeclaredMethod("onGetDataSucceed", String::class.java)
+                .apply { isAccessible = true }
+            module.hook(ok).intercept { chain ->
+                Log.w(TAG, "onGetDataSucceed 自然触发 arg=${chain.args.getOrNull(0)}")
+                chain.proceed()
+            }
+
+            // 3) 页面 onCreate 完成后，延迟主动触发
+            val oc = fragCls.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
+            module.hook(oc).intercept { chain ->
+                val result = chain.proceed()
+                // 假设：getArguments()==null 时 fragment 在 0065 已 finish，成为死对象，
+                // 后续 onGetDataSucceed 全是空操作（解释「4 次触发都无下游」的不稳定性）。
+                runCatching {
+                    val frag = chain.thisObject
+                    val args = frag?.javaClass?.getMethod("getArguments")?.invoke(frag)
+                    val act = runCatching {
+                        frag?.javaClass?.getMethod("getActivity")?.invoke(frag)
+                    }.getOrNull()
+                    val finishing = runCatching {
+                        act?.javaClass?.getMethod("isFinishing")?.invoke(act)
+                    }.getOrNull()
+                    Log.w(TAG, "DeviceProfilesSettings: args=${if (args == null) "NULL" else "ok($args)"} activityFinishing=$finishing")
+                }.onFailure {
+                    Log.w(TAG, "读取 fragment 状态失败: ${it.javaClass.simpleName}")
+                }
+                // 面板渲染不稳定（21:57/22:05 有、22:07 后无），单次 postDelayed(1500)
+                // 容易落在数据流之外。改成多个时间点重复触发，提高命中率。
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                for (delay in longArrayOf(400L, 1200L, 2500L, 4500L)) {
+                    handler.postDelayed({
+                        val inst = capturedListener
+                        if (inst == null) {
+                            Log.w(TAG, "主动触发失败(delay=${delay}ms)：未捕获 \$a 实例")
+                        } else {
+                            runCatching {
+                                Log.w(TAG, "主动触发 onGetDataSucceed(delay=${delay}ms)")
+                                ok.invoke(inst, "18:5C:A1:52:10:36")
+                            }.onFailure {
+                                Log.w(TAG, "主动触发抛异常(delay=${delay}ms): ${it.javaClass.simpleName}")
+                            }
+                        }
+                    }, delay)
+                }
+                result
+            }
+            Log.i(TAG, "installed: onGetDataSucceed 观察 + 多点主动触发")
+        }.onFailure {
+            Log.w(TAG, "install onGetDataSucceed failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── ★ 最终开关：x7.a.r():boolean ─────────────────────────────────
+        // 反汇编 NoiseControlController.displayPreference：
+        //   0004 invoke-virtual Lx7/a;.r:()Z
+        //   0008 if-nez v0 → 000b（继续）
+        //   000a goto 0031                    ← false 直接 return，preference 永不 add
+        //   000b super.displayPreference
+        //   0012 buildPreferenceCategory → addPreference(category)
+        //   0021 buildPreference + initExtras → addPreference(preference)
+        // mActiveDevice 是 x7.a（活跃蓝牙设备），r() 判定「是否支持降噪」。
+        runCatching {
+            val m = findClass("x7.a").getDeclaredMethod("r").apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val original = chain.proceed()
+                if (original == true) original
+                else {
+                    Log.w(TAG, "x7.a.r() => false  强制改写为 true（降噪行最终开关）")
+                    true
+                }
+            }
+            Log.i(TAG, "installed: x7.a.r() [NoiseControlController 降噪行最终开关]")
+        }.onFailure {
+            Log.w(TAG, "install x7.a.r failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 观察点：Preference.setEnabled —— 降噪按钮是否被禁用 ──
+        // 实测点击 [降噪] 无任何下发日志，怀疑按钮 isEnabled=false。
+        // 直接观察 setEnabled 比反汇编更可靠（dexdump 对该两个私有方法输出格式不一致）。
+        runCatching {
+            val m = findClass("androidx.preference.Preference")
+                .getDeclaredMethod("setEnabled", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val key = runCatching {
+                    chain.thisObject?.javaClass?.getMethod("getKey")?.invoke(chain.thisObject)
+                }.getOrNull()
+                val value = chain.args.getOrNull(0)
+
+                // 实测三档降噪按钮被显式 setEnabled(false)，导致点击无任何下发：
+                //   key_denoise(false) / key_hear_through(false) / key_denoise_close(false)
+                if (key in NOISE_KEYS && value == false) {
+                    if (noiseEnableGuard.get()) return@intercept chain.proceed()
+                    Log.w(TAG, "强制启用降噪按钮 key=$key")
+                    noiseEnableGuard.set(true)
+                    try {
+                        val r = chain.proceed()
+                        m.invoke(chain.thisObject, true)   // 置回 true
+                        r
+                    } finally {
+                        noiseEnableGuard.set(false)
+                    }
+                } else {
+                    chain.proceed()
+                }
+            }
+            Log.i(TAG, "installed: Preference.setEnabled 观察 + 降噪按钮强制启用")
+        }.onFailure {
+            Log.w(TAG, "install setEnabled failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // 注意：setNoiseControlFunction (n3.a.u) 的归属是 AudioAccessoryManager 而非 Settings，
+        // 已移到 HonorEarphoneHook（这里放会报 ClassNotFoundException: d3.f）。
+        // ── 点击是否进入 preference 层（判据：getOnClickHandler/performClick）──
+        // 三档按钮 key 在 Settings 进程（setEnabled 日志来自 Settings），
+        // 但下发链 g2.q/n3.a 在 AAM 进程 —— 需先确认点击事件在哪一层断掉。
+        runCatching {
+            val m = findClass("androidx.preference.Preference")
+                .getDeclaredMethod("performClick").apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val key = runCatching {
+                    chain.thisObject?.javaClass?.getMethod("getKey")?.invoke(chain.thisObject)
+                }.getOrNull()
+                Log.w(TAG, "performClick key=$key")
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: Preference.performClick 观察")
+        }.onFailure {
+            Log.w(TAG, "install performClick failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 下发链同时装进 Settings（点击发生在本进程，之前只装在 AAM）──
+        for ((clsName, mName) in listOf(Pair("g2.q", "C"), Pair("g2.q", "A0"))) {
+            runCatching {
+                val clazz = findClass(clsName)
+                val ms = clazz.declaredMethods.filter { it.name == mName }
+                if (ms.isEmpty()) throw NoSuchMethodException("$clsName.$mName")
+                ms.forEach { m ->
+                    m.isAccessible = true
+                    module.hook(m).intercept { chain ->
+                        Log.w(TAG, "下发链命中(Settings): $clsName.$mName(${chain.args.joinToString()})")
+                        chain.proceed()
+                    }
+                }
+                Log.i(TAG, "installed: 下发链观察(Settings) $clsName.$mName (${ms.size})")
+            }.onFailure {
+                Log.w(TAG, "install(Settings) $clsName.$mName failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+        }
+        // ── View 层点击观察（降噪是 widget，不走 Preference.performClick）──
+        // widget 节点：com.android.settings:id/switch_1  clickable=true enabled=true
+        runCatching {
+            val vp = Class.forName("android.view.View")
+                .getDeclaredMethod("performClick").apply { isAccessible = true }
+            module.hook(vp).intercept { chain ->
+                val v = chain.thisObject
+                val id = runCatching { v.javaClass.getMethod("getId").invoke(v) as? Int }.getOrNull()
+                var name: String? = null
+                if (id != null && id != 0) {
+                    name = runCatching {
+                        v.javaClass.getMethod("getResources").invoke(v)
+                            ?.javaClass?.getMethod("getResourceName", Int::class.javaPrimitiveType)
+                            ?.invoke(v, id) as? String
+                    }.getOrNull()
+                }
+                // 全量记录（不再只记有 resource-id 的）——上一轮盲区：降噪 widget 可能无 id
+                val bounds = runCatching {
+                    v.javaClass.getMethod("getWidth").invoke(v).toString() + "x" +
+                        v.javaClass.getMethod("getHeight").invoke(v)
+                }.getOrNull()
+                val cls = v.javaClass.name
+                if (id != null && id != 0) {
+                    Log.w(TAG, "View.performClick id=$id name=$name cls=$cls")
+                } else {
+                    Log.i(TAG, "View.performClick (无id) cls=$cls size=$bounds")
+                }
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: View.performClick 全量观察")
+        }.onFailure {
+            Log.w(TAG, "install View.performClick failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 谁给降噪 widget 绑 onClick（判断 handler 是否缺失）──
+        runCatching {
+            val m = Class.forName("android.view.View")
+                .getDeclaredMethod("setOnClickListener",
+                    Class.forName("android.view.View\$OnClickListener"))
+                .apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val v = chain.thisObject
+                val id = runCatching { v.javaClass.getMethod("getId").invoke(v) as? Int }.getOrNull()
+                var name: String? = null
+                if (id != null && id != 0) {
+                    name = runCatching {
+                        v.javaClass.getMethod("getResources").invoke(v)
+                            ?.javaClass?.getMethod("getResourceName", Int::class.javaPrimitiveType)
+                            ?.invoke(v, id) as? String
+                    }.getOrNull()
+                }
+                val listener = chain.args.getOrNull(0)
+                if (name == null || name.contains("switch_1") || name.contains("noise", true)) {
+                    Log.w(TAG, "setOnClickListener id=${name ?: "(无id)"} listener=${listener?.javaClass?.name} cls=${v.javaClass.name}")
+                }
+                // 捕获降噪控件的 (listener, view)，主动调用 onClick —— 彻底绕过坐标猜测
+                if (listener != null &&
+                    listener.javaClass.name.contains("MultiStateSwitchingPanelPreference") &&
+                    noiseListener == null
+                ) {
+                    noiseListener = listener
+                    noiseView = v
+                    Log.w(TAG, "★ 捕获 MultiState listener=${System.identityHashCode(listener)} view=${System.identityHashCode(v)}")
+                }
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: setOnClickListener 观察（降噪相关才记）")
+        }.onFailure {
+            Log.w(TAG, "install setOnClickListener failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+
+        // ── 主动触发降噪 onClick（页面 onCreate 后 3 秒，绕过坐标）──
+        runCatching {
+            val fragCls = findClass("com.android.settings.bluetooth.DeviceProfilesSettings")
+            val oc2 = fragCls.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
+            module.hook(oc2).intercept { chain ->
+                val r = chain.proceed()
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    val L = noiseListener
+                    val V = noiseView
+                    if (L == null || V == null) {
+                        Log.w(TAG, "主动 onClick 失败：未捕获 listener/view")
+                    } else {
+                        runCatching {
+                            Log.w(TAG, "★ 主动调用 MultiState.onClick(view)")
+                            L.javaClass.getDeclaredMethod("onClick", Class.forName("android.view.View"))
+                                .apply { isAccessible = true }
+                                .invoke(L, V)
+                        }.onFailure {
+                            Log.w(TAG, "主动 onClick 抛异常: ${it.javaClass.simpleName}: ${it.message}")
+                        }
+                    }
+                }, 3000L)
+                r
+            }
+            Log.i(TAG, "installed: 主动触发 MultiState.onClick")
+        }.onFailure {
+            Log.w(TAG, "install 主动 onClick failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 降噪三态开关本体：MultiStateSwitchingPanelPreference ──
+        // 方法表：onClick(View) / Q(B)V(设置档位, Byte=模式) / U(V) V(V) 视觉 / R(a) 注册
+        runCatching {
+            val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference")
+            val onClick = cls.getDeclaredMethod("onClick", Class.forName("android.view.View"))
+                .apply { isAccessible = true }
+            module.hook(onClick).intercept { chain ->
+                Log.w(TAG, "MultiStateSwitchingPanel.onClick view=${chain.args.getOrNull(0)?.javaClass?.name}")
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: MultiStateSwitchingPanel.onClick")
+        }.onFailure {
+            Log.w(TAG, "install onClick failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        runCatching {
+            val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference")
+            val q = cls.getDeclaredMethod("Q", Byte::class.javaObjectType).apply { isAccessible = true }
+            module.hook(q).intercept { chain ->
+                Log.w(TAG, "★ 档位设置 Q(mode=${chain.args.getOrNull(0)})")
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: MultiStateSwitchingPanel.Q(byte) [档位]")
+        }.onFailure {
+            Log.w(TAG, "install Q failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── ★★ 真正的下发回调：MultiStateSwitchingPanelPreference$a.onMultiStateClicked(int, byte) ──
+        // onClick 反汇编（classes3.dex hdr=222319）：
+        //   tag=v.getTag(); null→return; cb=this.b; null→return;
+        //   index=((Integer)tag).intValue()
+        //   Log.i("MultiStateSwitchingPane","onClick: "+index)
+        //   item=this.a.get(index) → $b ; mode=$b.a(item):B
+        //   this.Q(B) ; cb.onMultiStateClicked(index, mode)   ← ★ 下发入口
+        runCatching {
+            val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference\$a")
+            val ms = cls.declaredMethods.filter { it.name == "onMultiStateClicked" }
+            if (ms.isEmpty()) throw NoSuchMethodException("onMultiStateClicked")
+            for (m in ms) {
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    Log.w(TAG, "★★ 下发回调 onMultiStateClicked index=${chain.args.getOrNull(0)} mode=${chain.args.getOrNull(1)}")
+                    chain.proceed()
+                }
+            }
+            Log.i(TAG, "installed: onMultiStateClicked 下发回调 (${ms.size})")
+        }.onFailure {
+            Log.w(TAG, "install onMultiStateClicked failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 抓 onMultiStateClicked 的实现类（$a 是接口，hook 不上）──
+        // 反汇编：R(Lcom/.../MultiStateSwitchingPanelPreference$a;)V 给字段 b 赋值
+        runCatching {
+            val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference")
+            val r = cls.declaredMethods.first { it.name == "R" }.apply { isAccessible = true }
+            module.hook(r).intercept { chain ->
+                val impl = chain.args.getOrNull(0)
+                val cname = impl?.javaClass?.name
+                Log.w(TAG, "★ 注册 onMultiStateClicked 实现类 = $cname  obj=${impl?.let { System.identityHashCode(it) }}")
+                if (cname != null && cname != "com.android.settings.preference.MultiStateSwitchingPanelPreference\$a") {
+                    noiseDispatchImpl = impl
+                }
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: MultiState.R(a) [抓实现类]")
+        }.onFailure {
+            Log.w(TAG, "install R failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        // ── 抓到实现类后立刻 hook 它的 onMultiStateClicked ──
+        runCatching {
+            val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference")
+            val r = cls.declaredMethods.first { it.name == "R" }.apply { isAccessible = true }
+            module.hook(r).intercept { chain ->
+                val impl = chain.args.getOrNull(0)
+                if (impl != null && noiseDispatchHooked == false) {
+                    runCatching {
+                        val ms = impl.javaClass.declaredMethods.filter { it.name == "onMultiStateClicked" }
+                        for (m in ms) {
+                            m.isAccessible = true
+                            module.hook(m).intercept { c2 ->
+                                val index = c2.args.getOrNull(0)
+                                val mode = c2.args.getOrNull(1)
+                                Log.w(TAG, "★★ 下发回调实现类 ${impl.javaClass.name} index=$index mode=$mode")
+                                // ── 协议桥：Settings 进程 → bluetooth 进程 RfcommController ──
+                                // 接收端已存在：RfcommController.kt:403
+                                //   ACTION_ANC_SELECT -> setANCMode(getIntExtra("status",0))
+                                //   1=ANC_OFF 2=ANC_TRANSPARENT 3=ANC_NORMAL 4=ANC_DEEP 5=ANC_EXPERIMENT
+                                // 映射按 UI 顺序 降噪/透传/关闭 → index 0/1/2
+                                // 用户要求：「降噪」用**实验性降噪** → status=5 → AncMode.EXPERIMENT(0x10)
+                                val status = when (index) {
+                                    0 -> 5   // 降噪 → 实验性降噪 ANC_EXPERIMENT (0x10)
+                                    1 -> 2   // 透传 ANC_TRANSPARENT
+                                    2 -> 1   // 关闭 ANC_OFF
+                                    else -> null
+                                }
+                                if (status != null) {
+                                    runCatching {
+                                        val app = Class.forName("android.app.ActivityThread")
+                                            .getDeclaredMethod("currentApplication").invoke(null)
+                                        val ctx = app as? android.content.Context
+                                        if (ctx == null) throw IllegalStateException("context null")
+                                        val intent = android.content.Intent(
+                                            "com.redwind.magicorig.ACTION_ANC_SELECT"
+                                        ).putExtra("status", status)
+                                        ctx.sendBroadcast(intent)
+                                        Log.w(TAG, "→→ 已广播 ANC status=$status (index=$index mode=$mode)")
+                                    }.onFailure {
+                                        Log.w(TAG, "广播失败: ${it.javaClass.simpleName}: ${it.message}")
+                                    }
+                                } else {
+                                    Log.w(TAG, "index=$index 无法映射，跳过广播")
+                                }
+                                c2.proceed()
+                            }
+                        }
+                        noiseDispatchHooked = true
+                        Log.i(TAG, "installed: onMultiStateClicked 实现 ${impl.javaClass.name} (${ms.size})")
+                    }.onFailure {
+                        Log.w(TAG, "hook 实现类失败: ${it.javaClass.simpleName}: ${it.message}")
+                    }
+                }
+                chain.proceed()
+            }
+        }.onFailure { Log.w(TAG, "install R#2 failed: ${it.javaClass.simpleName}") }
+    }
+
+    private var noiseDispatchImpl: Any? = null
+    private var noiseDispatchHooked = false
+    private val NOISE_KEYS = setOf("key_denoise", "key_hear_through", "key_denoise_close")
+    private val noiseEnableGuard = ThreadLocal.withInitial { false }
+    private var capturedListener: Any? = null
+    private var noiseListener: Any? = null
+    private var noiseView: Any? = null
+}

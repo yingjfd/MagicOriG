@@ -1,0 +1,10 @@
+name=MagicOriG
+description=NickHCK YuanDao OriG in earbuds integration for MagicOS
+minApiVersion=101
+# LSPosed: targetVersion = extractIntPart(prop.getProperty("targetApiVersion"))
+# 缺少此键时 extractIntPart(null) 抛 NPE，且构造函数只 catch IOException/OOM，
+# 异常会从 reloadInstalledModules() 的循环里逃逸，导致整个模块列表加载失败，
+# 表现为「LSPosed 模块列表里一个模块都看不到」。此键必须显式声明。
+targetApiVersion=102
+staticScope=true
+autoHotReload=false

@@ -1,0 +1,4 @@
+<resources>
+    <bool name="hide_changelog">true</bool>
+    <bool name="hide_licenses">true</bool>
+</resources>
