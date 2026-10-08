@@ -219,7 +219,7 @@ private fun BatteryGauge(label: String, pct: Int) {
     val color = when {
         pct < 0 -> MaterialTheme.colorScheme.onSurfaceVariant
         pct <= 20 -> MaterialTheme.colorScheme.error
-        pct <= 50 -> Color(0xFFFF9500)
+        pct <= 50 -> MaterialTheme.colorScheme.tertiary   // 低电量用 M3 tertiary（warning 语义）
         else -> MaterialTheme.colorScheme.primary
     }
     val display = if (pct < 0) "?" else "$pct%"
