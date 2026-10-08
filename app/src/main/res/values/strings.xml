@@ -10,5 +10,7 @@
         <!-- 荣耀耳机面板（电量/降噪 UI 所在进程）。
              现代模块只读 META-INF/xposed/scope.list，此处仅为旧式回退保持一致。 -->
         <item>com.hihonor.audioaccessorymanager</item>
+        <!-- 音频切换（荣耀 SWS 耳机服务）：在通知上追加耳机电量 -->
+        <item>com.hihonor.imedia.sws</item>
     </string-array>
 </resources>

@@ -56,6 +56,11 @@ class HookEntry : XposedModule() {
                 loadHook(SettingsHeadsetHook, param.classLoader, param.packageName)
             }
 
+            // ── 音频切换（荣耀媒体输出/SWS 耳机服务）── 通知电量追加 ─────
+            "com.hihonor.imedia.sws" -> {
+                loadHook(MediaSwsBatteryHook, param.classLoader, param.packageName)
+            }
+
             // ── 荣耀耳机面板（电量 / 降噪 UI 所在进程）────────────────
             "com.hihonor.audioaccessorymanager" -> {
                 loadHook(HonorEarphoneHook, param.classLoader, param.packageName)

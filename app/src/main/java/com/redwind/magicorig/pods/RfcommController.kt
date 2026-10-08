@@ -455,6 +455,15 @@ object RfcommController {
             HuaweiStrongToastUtil.showPodsBatteryToast(ctx, currentBatteryParams!!)
             HuaweiStrongToastUtil.showBtNotification(ctx, mDevice, currentBatteryParams!!)
             changeUIBatteryStatus(currentBatteryParams!!)
+            // 跨进程电量通道：SharedPreferences 是 bluetooth 私有目录，Settings/NoticeFlow 读不到，
+            // 转存 Settings.Global（全进程只读可见），供通知 hook 追加电量。
+            runCatching {
+                val res = ctx.contentResolver
+                android.provider.Settings.Global.putString(
+                    res, "magicorig_battery", "L${left.battery},R${right.battery}"
+                )
+                Log.i(TAG, "电量已写入 Settings.Global: L${left.battery},R${right.battery}")
+            }.onFailure { Log.w(TAG, "Global 写入失败: ${it.javaClass.simpleName}") }
         }.onFailure { Log.e(TAG, "battery toast/notification failed", it) }
 
         lastTempBatt = when {

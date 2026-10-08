@@ -67,6 +67,18 @@
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposedscope" />
+
+        <!-- 控制中心降噪快捷磁贴 -->
+        <service
+            android:name=".hook.QuickSettingsAncTile"
+            android:exported="true"
+            android:icon="@android:drawable/stat_sys_data_bluetooth"
+            android:label="MagicOriG"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

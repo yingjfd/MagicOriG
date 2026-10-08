@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "at": "2026-10-08T02:13:14.244Z",
+  "plugin": "conversation-manager",
+  "version": "0.5.1",
+  "cjkSearch": {
+    "installed": false,
+    "reason": "absent",
+    "targets": {
+      "sessionController": "absent",
+      "sessions": "search-unavailable"
+    },
+    "attempts": 1,
+    "calls": 0,
+    "cacheHits": 0,
+    "added": 0,
+    "lastElapsedMs": null
+  }
+}

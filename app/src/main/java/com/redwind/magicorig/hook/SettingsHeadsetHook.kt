@@ -173,6 +173,39 @@ object SettingsHeadsetHook : HookContext() {
                         }
                     }, delay)
                 }
+                // 设跳过期避免主动触发期间隐式 ANC 下发（进页面时耳机不应自动切模式）
+                skipAncDispatch.set(true)
+                handler.postDelayed({ skipAncDispatch.set(false) }, 5500L)
+                // ── 恢复上次使用的档位（只改 UI 选中态，不下发给耳机）──
+                handler.postDelayed({
+                    runCatching {
+                        val app = Class.forName("android.app.ActivityThread")
+                            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                            ?: return@runCatching
+                        val last = android.provider.Settings.Global.getString(
+                            app.contentResolver, "magicorig_last_anc"
+                        ) ?: return@runCatching
+                        // status(1/2/5) → AncMode 字节(0x00/0x01/0x10)
+                        val modeByte: Byte = when (last) {
+                            "1" -> 0x00   // 关闭 ANC_OFF
+                            "2" -> 0x01   // 透传 ANC_TRANSPARENT
+                            "3" -> 0x02   // 普通降噪 ANC_NORMAL
+                            "4" -> 0x03   // 深度降噪 ANC_DEEP
+                            "5" -> 0x10   // 实验性降噪 ANC_EXPERIMENT
+                            "6" -> 0x11   // 抗风噪
+                            else -> return@runCatching
+                        }
+                        val pref = noiseListener
+                        if (pref == null) {
+                            Log.w(TAG, "恢复上次档位失败：未捕获 MultiState 偏好")
+                            return@runCatching
+                        }
+                        pref.javaClass.getDeclaredMethod("Q", Byte::class.javaObjectType)
+                            .apply { isAccessible = true }
+                            .invoke(pref, modeByte)
+                        Log.i(TAG, "已恢复上次档位 UI: status=$last → modeByte=0x${"%02X".format(modeByte)}")
+                    }.onFailure { Log.w(TAG, "恢复上次档位失败: ${it.javaClass.simpleName}: ${it.message}") }
+                }, 6000L)
                 result
             }
             Log.i(TAG, "installed: onGetDataSucceed 观察 + 多点主动触发")
@@ -464,6 +497,16 @@ object SettingsHeadsetHook : HookContext() {
                                     else -> null
                                 }
                                 if (status != null) {
+                                    // 记录用户选择的 ANC 档位到 Settings.Global（跨进程持久化）
+                                    runCatching {
+                                        val app = Class.forName("android.app.ActivityThread")
+                                            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                                        app?.let {
+                                            android.provider.Settings.Global.putString(
+                                                it.contentResolver, "magicorig_last_anc", status.toString()
+                                            )
+                                        }
+                                    }.onFailure { /* 记录失败不影响广播 */ }
                                     runCatching {
                                         val app = Class.forName("android.app.ActivityThread")
                                             .getDeclaredMethod("currentApplication").invoke(null)
@@ -501,4 +544,5 @@ object SettingsHeadsetHook : HookContext() {
     private var capturedListener: Any? = null
     private var noiseListener: Any? = null
     private var noiseView: Any? = null
+    private var skipAncDispatch = ThreadLocal.withInitial { false }
 }
