@@ -1,0 +1,12 @@
+<resources>
+    <!-- 深色模式窗口背景（M3 #121212），避免浅色窗口背景在深色下闪白 -->
+    <style name="Theme.MagicOriG" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">#FF121212</item>
+    </style>
+    <style name="Theme.MagicOriG.Popup" parent="android:Theme.Material.Dialog">
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
+</resources>
