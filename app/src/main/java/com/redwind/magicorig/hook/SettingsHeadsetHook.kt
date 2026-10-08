@@ -420,7 +420,7 @@ object SettingsHeadsetHook : HookContext() {
         }
         runCatching {
             val cls = findClass("com.android.settings.preference.MultiStateSwitchingPanelPreference")
-            val q = cls.getDeclaredMethod("Q", Byte::class.javaObjectType).apply { isAccessible = true }
+            val q = cls.getDeclaredMethod("Q", Byte::class.javaPrimitiveType).apply { isAccessible = true }
             module.hook(q).intercept { chain ->
                 Log.w(TAG, "★ 档位设置 Q(mode=${chain.args.getOrNull(0)})")
                 chain.proceed()
