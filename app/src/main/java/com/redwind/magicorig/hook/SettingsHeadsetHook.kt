@@ -200,7 +200,7 @@ object SettingsHeadsetHook : HookContext() {
                             Log.w(TAG, "恢复上次档位失败：未捕获 MultiState 偏好")
                             return@runCatching
                         }
-                        pref.javaClass.getDeclaredMethod("Q", Byte::class.javaObjectType)
+                        pref.javaClass.getDeclaredMethod("Q", Byte::class.javaPrimitiveType)
                             .apply { isAccessible = true }
                             .invoke(pref, modeByte)
                         Log.i(TAG, "已恢复上次档位 UI: status=$last → modeByte=0x${"%02X".format(modeByte)}")
