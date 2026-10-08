@@ -10,13 +10,13 @@
 
 | 功能 | 说明 |
 |------|------|
-| 🎧 **降噪模式切换** | 在蓝牙设置详情页直接调节降噪：实验性降噪 / 透传 / 关闭 |
+| 🎧 **降噪模式切换** | 在蓝牙设置详情页直接调节降噪：实验性降噪 / 深度降噪 / 普通降噪 |
 | 🔋 **耳机电量显示** | 蓝牙设置页、App 首页同时显示左右耳独立电量 |
 | ⚡ **控制中心快捷磁贴** | 下拉控制中心一键切换降噪模式（三档循环） |
 | 💾 **记住档位** | 自动记住上次使用的降噪模式，下次进入自动恢复选中态 |
 | 🔔 **音频通知电量** | 音频切换通知自动追加左右耳电量 |
 | 🚫 **断联通知自清** | 耳机断开后电量通知自动消失 |
-| 📱 **新 UI 管理 App** | 液态玻璃风格设置页：首页电量/档位 + 关于页仓库链接 |
+| 📱 **新 UI 管理 App** | Material3 风格设置页：首页电量/档位 + 关于页仓库链接 |
 | 🔧 **模块自检** | App 内置 LSPosed 识别检测卡片 |
 
 ## 实测数据
@@ -25,9 +25,9 @@
 
 | UI 按钮 | Status | AncMode | SPP 帧（16 进制） |
 |---------|--------|---------|-------------------|
-| **降噪** | 5 | EXPERIMENT `0x10` | `4E 05 00 00 01 02 10 00` |
-| 透传 | 2 | TRANSPARENT `0x01` | `4E 05 00 00 01 02 01 00` |
-| 关闭 | 1 | OFF `0x00` | `4E 05 00 00 01 02 00 00` |
+| **实验性降噪** | 5 | EXPERIMENT `0x10` | `4E 05 00 00 01 02 10 00` |
+| **深度降噪** | 4 | DEEP `0x03` | `4E 05 00 00 01 02 03 00` |
+| **普通降噪** | 3 | NORMAL `0x02` | `4E 05 00 00 01 02 02 00` |
 
 ### 性能数据
 
@@ -41,7 +41,7 @@
 ### 端到端链路
 
 ```
-用户点击 [降噪/透传/关闭]
+用户点击 [实验性降噪/深度降噪/普通降噪]
   → MultiStateSwitchingPanelPreference.onClick(View)
   → NoiseControlPanelController.onMultiStateClicked(index, mode)
   → 广播 ACTION_ANC_SELECT(status)       [Settings 进程]
@@ -154,8 +154,7 @@ adb shell "su -c 'grep -a MagicOriG /data/adb/lspd/log/modules_*.log | tail -20'
 
 - [HyperOriG](https://github.com/KiriChen-Wind/HyperOriG) — 原始 RFCOMM/电量/ANC 逻辑
 - [LibXposed API](https://github.com/libxposed/api) — LSPosed 接口
-- [miuix](https://compose-miuix-ui.github.io/miuix/zh_CN/) — UI 风格参考
-- [Liquid Glass](https://liquidglass.qmdeve.com/zh/) — 底栏玻璃效果灵感
+- [Material3](https://m3.material.io) — UI 主题风格
 
 ## License
 

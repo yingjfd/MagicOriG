@@ -185,14 +185,11 @@ object SettingsHeadsetHook : HookContext() {
                         val last = android.provider.Settings.Global.getString(
                             app.contentResolver, "magicorig_last_anc"
                         ) ?: return@runCatching
-                        // status(1/2/5) → AncMode 字节(0x00/0x01/0x10)
+                        // status → AncMode 字节：仅三档（实验性/深度/普通降噪）
                         val modeByte: Byte = when (last) {
-                            "1" -> 0x00   // 关闭 ANC_OFF
-                            "2" -> 0x01   // 透传 ANC_TRANSPARENT
-                            "3" -> 0x02   // 普通降噪 ANC_NORMAL
-                            "4" -> 0x03   // 深度降噪 ANC_DEEP
                             "5" -> 0x10   // 实验性降噪 ANC_EXPERIMENT
-                            "6" -> 0x11   // 抗风噪
+                            "4" -> 0x03   // 深度降噪 ANC_DEEP
+                            "3" -> 0x02   // 普通降噪 ANC_NORMAL
                             else -> return@runCatching
                         }
                         val pref = noiseListener
@@ -488,12 +485,11 @@ object SettingsHeadsetHook : HookContext() {
                                 // 接收端已存在：RfcommController.kt:403
                                 //   ACTION_ANC_SELECT -> setANCMode(getIntExtra("status",0))
                                 //   1=ANC_OFF 2=ANC_TRANSPARENT 3=ANC_NORMAL 4=ANC_DEEP 5=ANC_EXPERIMENT
-                                // 映射按 UI 顺序 降噪/透传/关闭 → index 0/1/2
-                                // 用户要求：「降噪」用**实验性降噪** → status=5 → AncMode.EXPERIMENT(0x10)
+                                // 映射：index 0/1/2 → 实验性降噪 / 深度降噪 / 普通降噪
                                 val status = when (index) {
-                                    0 -> 5   // 降噪 → 实验性降噪 ANC_EXPERIMENT (0x10)
-                                    1 -> 2   // 透传 ANC_TRANSPARENT
-                                    2 -> 1   // 关闭 ANC_OFF
+                                    0 -> 5   // 实验性降噪 ANC_EXPERIMENT (0x10)
+                                    1 -> 4   // 深度降噪 ANC_DEEP (0x03)
+                                    2 -> 3   // 普通降噪 ANC_NORMAL (0x02)
                                     else -> null
                                 }
                                 if (status != null) {
