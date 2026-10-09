@@ -120,7 +120,7 @@ onNoiseModeClick                           → 观察点
 | 入口 Entry | 位置 Where |
 | --- | --- |
 | 降噪三档 / ANC gears | 蓝牙设置 → 耳机详情页 → 噪声控制 / Bluetooth settings → device detail |
-| 设备中心降噪 / Device-center ANC | 控制中心 → 设备中心卡片条 → 点耳机球 → 噪声控制 / Control center → device-center bar → tap the bud ball |
+| 设备中心降噪 / Device-center ANC | 下拉控制中心 → 点编辑 → **拖出「设备中心」到主栏** → 点耳机球 → 噪声控制 / Pull down → edit → drag **Device Center** to the main bar → tap the bud ball |
 | 快捷磁贴 / Quick tile | 控制中心编辑 → 添加 MagicOriG 磁贴 → 循环切换三档 / Control-center edit → add the tile |
 | 管理 App / App | 桌面 MagicOriG 图标（电量、默认档位、自检）/ Home-screen app |
 
