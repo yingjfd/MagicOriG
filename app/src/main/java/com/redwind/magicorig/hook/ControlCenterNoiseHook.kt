@@ -38,7 +38,9 @@ object ControlCenterNoiseHook : HookContext() {
                 if (orig != null) return@intercept orig   // 有真实数据 → 不干预
                 // 构造注入对象
                 val data = dataCls.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
-                val modeCls = Class.forName(MODE_CLS)
+                // ★ 必须用 findClass（宿主 ClassLoader）：Class.forName 走模块 loader 会 CNFE
+                //   （实测: ClassNotFoundException EarphoneNoiseData$NoiseMode，DexPathList 含模块 apk）
+                val modeCls = findClass(MODE_CLS)
                 val consts = modeCls.enumConstants
                 if (consts == null) {
                     Log.w(TAG, "NoiseMode 非 enum？跳过注入")
@@ -412,6 +414,35 @@ object ControlCenterNoiseHook : HookContext() {
                 Log.i(TAG, "installed: c2.s.o [LinkDevice 注册表兜底]")
             }.onFailure {
                 Log.w(TAG, "c2.s.o hook 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
+            // ── 10) ★ 在线态断根：createDeviceServiceCard 每次开卡都读 ballView.isOnline()
+            //    决定走在线卡（gen 5-section 含噪声控制）还是离线卡（只有响铃/连接）。
+            //    我们在球创建时设的 true 会被荣耀属性监听（onPropertyInfoChange）重置回 false
+            //    → 卡片时而在线时而离线。直接在读取口对我们的球恒返回 true。
+            runCatching {
+                val bvCls = findClass("com.hihonor.controlviewnew.widget.BasicDeviceBallView")
+                val m = bvCls.getDeclaredMethods().first {
+                    it.name == "isOnline" && it.parameterCount == 0 &&
+                            it.returnType == Boolean::class.javaPrimitiveType
+                }.apply { isAccessible = true }
+                module.hook(m).intercept { chain ->
+                    val ret = chain.proceed() as? Boolean ?: false
+                    if (!ret) {
+                        val receiver = chain.thisObject
+                        val id = runCatching {
+                            receiver?.javaClass?.getMethod("getDeviceId")?.invoke(receiver)
+                        }.getOrNull()
+                        if (id == OUR_MAC) {
+                            Log.w(TAG, "★ ballView.isOnline() false → true ($OUR_NAME)")
+                            return@intercept true
+                        }
+                    }
+                    ret
+                }
+                Log.i(TAG, "installed: BasicDeviceBallView.isOnline [在线态断根]")
+            }.onFailure {
+                Log.w(TAG, "isOnline hook 失败: ${it.javaClass.simpleName}: ${it.message}")
             }
 
             // ── 8) 全景观察：genDeviceServiceInfo 返回的 sections 构成（一次看清全卡） ──
