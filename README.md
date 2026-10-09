@@ -175,6 +175,16 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.1**（2026-10-09）：**bug 修复集** —— ①设备中心点击切换无效（广播 status 曾为 String，
+  bluetooth 端 `getIntExtra` 读到 0 不发帧）与点一次后全部按钮卡死（荣耀 MBB 对第三方设备不回调
+  → `isSetting` 永真，改为模拟 `onResult` 回调）；②进入蓝牙/设备中心页面自动下发降噪
+  （档位恢复 `Q` 落在 skip 窗口 0.5s 间隙后 → Q 包入新 skip 窗口）；③耳机断连后球仍显示
+  （新增 `magicorig_connected` 门控，信号挂 A2DP 状态回调）；④双耳电量通知迁移到
+  「音频切换」app 连接耳机通知（`RemoteViews.setTextViewText` 改写为
+  「原道 OriG in / 左耳 x% 右耳 x%」），蓝牙进程不再单独弹电量通知。
+  Bug-fix batch: device-center tap dispatch + one-click lockout, no more auto-ANC on
+  page entry, ball disappears on disconnect (connected gating on A2DP callbacks),
+  battery notification moved to the audio-switch notice.
 * **v1.0.0**（2026-10-09）：**正式版** —— 三档降噪（实验性/深度/普通）、Material3 管理 App、控制中心磁贴、设备中心完整接入（11 环注入）、断联通知自清、通知电量追加、档位记忆。
   First stable: three ANC gears, Material3 app, QS tile, full device-center entry, auto-clear
   notification, notification battery, ANC memory.

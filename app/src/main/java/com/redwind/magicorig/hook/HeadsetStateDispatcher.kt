@@ -165,6 +165,14 @@ object HeadsetStateDispatcher : HookContext() {
         try {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
+                    // 任务6 连接态信号：A2DP/HEADSET 连上即写 1（比 SPP 电量回调更早更可靠，
+                    // 电量回调在回连后可能长时间不触发 → 球门控会误杀）
+                    runCatching {
+                        android.provider.Settings.Global.putString(
+                            context.contentResolver, "magicorig_connected", "1"
+                        )
+                        Log.i(TAG, "connected=1 (stateChange ${device.address})")
+                    }
                     if (isConnecting.compareAndSet(false, true)) {
                         thread(name = "magicorig-rfcomm-connect") {
                             safeConnect(context, device)
@@ -181,6 +189,13 @@ object HeadsetStateDispatcher : HookContext() {
                 }
 
                 BluetoothProfile.STATE_DISCONNECTING, BluetoothProfile.STATE_DISCONNECTED -> {
+                    // 任务6 连接态信号：断连写 0（与 RfcommController.disconnectedPod 双保险）
+                    runCatching {
+                        android.provider.Settings.Global.putString(
+                            context.contentResolver, "magicorig_connected", "0"
+                        )
+                        Log.i(TAG, "connected=0 (stateChange ${device.address})")
+                    }
                     isConnecting.set(false)
                     // 图标同样交给 SystemUI hook（见 CONNECTED 分支说明）
                     Log.i(TAG, "icon deferred to SystemUI hook (disconnected, dev=${device.address})")
