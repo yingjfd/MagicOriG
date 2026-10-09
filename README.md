@@ -16,11 +16,6 @@ like a first-party Honor earbud on MagicOS: adjust ANC right in Bluetooth settin
 **device center**, show battery, control it from a Quick Settings tile, and auto-clear the
 notification on disconnect. Every ANC click goes down the verified SPP link (~50ms).
 
-> ## ⚠️ 支持范围 / Support scope
-> **仅面向荣耀（HONOR）MagicOS；不为华为（HUAWEI）HarmonyOS 提供任何修改与支持。**
-> Honor MagicOS only — no changes or support for Huawei HarmonyOS.
-> 历史文档中出现的 "HarmonyOS" 字样均为早期描述遗留，不代表本项目支持华为系统。
-
 ## 为什么做这个模块 / Why
 
 荣耀 MagicOS 的降噪面板、设备中心服务卡、电量体系**只为自家（及认证）耳机开放**：
@@ -196,8 +191,8 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 * 本项目仅供学习与研究 Android Hook / 逆向技术使用，请勿用于商业用途。
   For learning and research on Android hooking and reverse engineering only.
-* **与荣耀公司 / HONOR 无任何关联**；相关商标与系统界面版权归原厂所有。**不支持华为 HarmonyOS。**
-  Not affiliated with Honor Device Co., Ltd. **Huawei HarmonyOS is not supported.**
+* **与荣耀公司 / HONOR 无任何关联**；相关商标与系统界面版权归原厂所有。
+  Not affiliated with Honor Device Co., Ltd.
 * 本模块为 AI 生成（见文首声明），使用本模块产生的任何后果由使用者自行承担。
   AI-generated (see the header) — use at your own risk.
 
