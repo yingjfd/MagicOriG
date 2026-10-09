@@ -1538,6 +1538,39 @@ createSections 三道门：
 - [ ] 卡片出现「噪声控制」三按钮（fromBatteryData 注入）
 - [ ] 点降噪 → `setNoiseCtrlMode(nc=1)` → `已广播 status=5` → bluetooth SPP `4E 05 00 00 01 02 10 00`
 
+### 8. 第 10-11 环：在线态断根 + ★ CNFE（ClassLoader 教训）
+
+**在线态被外部重置**：球创建时 `setIsOnline(true)` 会被荣耀属性监听
+（`DeviceProductManager$3.onPropertyInfoChange`）重置回 false → 卡片时而在线（5 section）
+时而离线（响铃/连接/设置）。断根：hook `BasicDeviceBallView.isOnline()`
+（`chain.thisObject` + `getDeviceId()==OUR_MAC` → 恒 true）。
+
+**★★ CNFE —— "sections=5 但 UI 不显示"的最终根因**：
+
+```
+Exception in hooker
+java.lang.ClassNotFoundException: ...EarphoneNoiseData$NoiseMode
+  on path: DexPathList[[... com.redwind.magicorig-XXX/base.apk ...]]
+```
+
+`fromBatteryData` 注入里 `Class.forName(MODE_CLS)` **默认走模块自身 ClassLoader**
+（DexPathList 含模块 apk 是实锤）→ 找不到宿主类 → `ProtectiveHooker` 捕获拦截 →
+注入静默失败 → `supportedModes` 保持空 → 数据层 SEC 对象照建、UI 按钮永远不亮。
+
+**修复**：`Class.forName(X)` → **`findClass(X)`**（HookContext：
+`Class.forName(name, false, appClassLoader)` = 宿主 ClassLoader）。
+
+> 规律：hook 回调里访问**宿主进程的类/资源**一律用 `findClass`/宿主 loader；
+> `Class.forName` 只对 `android.*` framework 类安全（bootstrap loader 可见）。
+> `enumConstants` 在 `forName(…, false, …)` 下安全（反射取 VALUES 字段会触发 <clinit>）。
+
+### 9. 反汇编备忘：方法体头格式
+
+- 方法体头：`|[offset] com.pkg.Class.method:(args)Ret`（**点号分隔类名**，如 `i2.b.g:(...)Z`）
+- 类声明：`Class descriptor: 'Lcom/pkg/Class;'`（**斜杠 descriptor**）
+- 两者的搜索 pattern 不可混用（曾因此误判"方法体不存在"）。
+
+
 
 
 
