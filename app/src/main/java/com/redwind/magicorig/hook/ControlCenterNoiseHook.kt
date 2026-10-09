@@ -24,6 +24,7 @@ import android.content.Intent
  */
 object ControlCenterNoiseHook : HookContext() {
     private const val TAG = "MagicOriG-CtrlCenter"
+    @Volatile private var lastClickStackAt = 0L
     private const val MODE_CLS = "com.hihonor.controlviewnew.deviceservicecard.EarphoneNoiseData\$NoiseMode"
     private const val DATA_CLS = "com.hihonor.controlviewnew.deviceservicecard.EarphoneNoiseData"
 
@@ -80,15 +81,18 @@ object ControlCenterNoiseHook : HookContext() {
             module.hook(m).intercept { chain ->
                 val deviceId = chain.args.getOrNull(0)
                 val nc = (chain.args.getOrNull(1) as? Int) ?: -1
-                // ncValue → 模块 status：降噪=用户默认档位(5/4/3)  透传=2  关闭=1  自适应忽略
-                val status = when (nc) {
-                    1 -> readLastAnc() ?: "5"
-                    2 -> "2"
-                    0 -> "1"
-                    else -> null
+                // ncValue → 模块 status(非空 Int)：降噪=用户默认档位(5/4/3)  透传=2  关闭=1  自适应忽略
+                // ★ 必须是 Int：曾用 String 导致 bluetooth 端 getIntExtra("status",0) 读不到
+                //   （类型不符返回默认 0，0 不在映射表 → 不发 SPP 帧 → 点击无效）
+                val status: Int = when (nc) {
+                    1 -> (readLastAnc() ?: "5").toIntOrNull() ?: 5
+                    2 -> 2
+                    0 -> 1
+                    else -> -1
                 }
                 Log.w(TAG, "★ setNoiseCtrlMode(deviceId=$deviceId, nc=$nc) → status=$status")
-                if (status != null) {
+                var handled = false
+                if (status in 0..9) {
                     runCatching {
                         val app = Class.forName("android.app.ActivityThread")
                             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
@@ -97,10 +101,25 @@ object ControlCenterNoiseHook : HookContext() {
                         )
                         Log.w(TAG, "→→ 已广播 ANC status=$status (设备中心)")
                     }.onFailure { Log.w(TAG, "广播失败: ${it.javaClass.simpleName}") }
+                    // ★ 荣耀 MBB 对第三方设备的 setNoiseCtrlMode 永不回调（onResult/onError 都不来）
+                    //   → onNoiseModeClick 的 isSetting 永真 → 点击一次后所有模式被早退（卡死）。
+                    //   这里直接模拟成功回调（$1.onResult 的参数不参与逻辑，只 post V 复位+高亮），
+                    //   并跳过原 MBB 调用。
+                    val cb = chain.args.getOrNull(2)
+                    if (cb != null) {
+                        runCatching {
+                            cb.javaClass.getMethod("onResult", String::class.java).invoke(cb, "")
+                            handled = true
+                            Log.w(TAG, "→→ 已模拟 onResult 回调（跳过 MBB 原调用）")
+                        }.onFailure { Log.w(TAG, "模拟回调失败: ${it.javaClass.simpleName}: ${it.message}") }
+                    }
                 } else {
             Log.w(TAG, "nc=$nc 不支持，跳过广播")
                 }
-                // 保留原调用：让荣耀回调（onResult/onError）正常触发，复位 isSetting/高亮
+                if (handled) {
+                    return@intercept null   // setNoiseCtrlMode 返回 void
+                }
+                // 回退路径：仍走原调用（依赖其回调）
                 chain.proceed()
             }
             Log.i(TAG, "installed: PropertyUtils.setNoiseCtrlMode [设备中心下发桥]")
@@ -116,6 +135,16 @@ object ControlCenterNoiseHook : HookContext() {
             }.apply { isAccessible = true }
             module.hook(m).intercept { chain ->
                 Log.w(TAG, "onNoiseModeClick mode=${chain.args.getOrNull(0)}")
+                // 抓调用栈定位"打开页面就自动点击"的触发者（限频：每 5 秒最多 1 条）
+                val now = System.currentTimeMillis()
+                if (now - lastClickStackAt > 5000) {
+                    lastClickStackAt = now
+                    val st = Thread.currentThread().stackTrace
+                    val frames = st.drop(3).take(8)
+                        .filterNot { it.className.startsWith("com.redwind.magicorig") || it.className.startsWith("java.lang.reflect") || it.className == "de.robv.android.xposed" || it.className.contains("xposed") || it.className.contains("LSPosed") || it.className.contains("lsposed") }
+                        .joinToString("\n    ") { "${it.className.substringAfterLast('.')}.$it" }
+                    Log.w(TAG, "  △ 调用栈:\n    $frames")
+                }
                 chain.proceed()
             }
             Log.i(TAG, "installed: onNoiseModeClick [观察]")
@@ -213,7 +242,8 @@ object ControlCenterNoiseHook : HookContext() {
                         val exists = result.any {
                             runCatching { it?.javaClass?.getMethod("getId")?.invoke(it) == OUR_MAC }.getOrDefault(false)
                         }
-                        if (!exists) {
+                        // 任务6：仅耳机在线时注入（断连后球/卡片消失）
+                        if (!exists && isOurConnected()) {
                             buildOur()?.let { info ->
                                 // List<*> 为只读视图，反射调 add；视图可能不可 add（unmodifiable）→ 全程保护
                                 runCatching {
@@ -236,7 +266,7 @@ object ControlCenterNoiseHook : HookContext() {
                 m.isAccessible = true
                 module.hook(m).intercept { chain ->
                     val n = chain.proceed() as? Int ?: 0
-                    val fixed = if (n <= 0) 1 else n
+                    val fixed = if (n <= 0 && isOurConnected()) 1 else n
                     if (fixed != n) Log.w(TAG, "★ getShowRemoteDeviceNum $n → $fixed")
                     fixed
                 }
@@ -445,6 +475,34 @@ object ControlCenterNoiseHook : HookContext() {
                 Log.w(TAG, "isOnline hook 失败: ${it.javaClass.simpleName}: ${it.message}")
             }
 
+            // ── 11) 任务2：卡片电量 —— getBatteryLevel 对我们的球返回跨进程真实电量 ──
+            //    （默认数据链 queryBatteryInfo 对第三方设备无回调 → 卡片无电量）
+            runCatching {
+                val bvCls = findClass("com.hihonor.controlviewnew.widget.BasicDeviceBallView")
+                val m = bvCls.getDeclaredMethods().first {
+                    it.name == "getBatteryLevel" && it.parameterCount == 0 &&
+                            it.returnType == Int::class.javaPrimitiveType
+                }.apply { isAccessible = true }
+                module.hook(m).intercept { chain ->
+                    val ret = chain.proceed() as? Int ?: -1
+                    val receiver = chain.thisObject
+                    val id = runCatching {
+                        receiver?.javaClass?.getMethod("getDeviceId")?.invoke(receiver)
+                    }.getOrNull()
+                    if (id == OUR_MAC) {
+                        val bat = batteryLevelForCard()
+                        if (bat != null && bat != ret) {
+                            Log.w(TAG, "★ ballView.getBatteryLevel $ret → $bat ($OUR_NAME)")
+                            return@intercept bat
+                        }
+                    }
+                    ret
+                }
+                Log.i(TAG, "installed: BasicDeviceBallView.getBatteryLevel [电量显示]")
+            }.onFailure {
+                Log.w(TAG, "getBatteryLevel hook 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
             // ── 8) 全景观察：genDeviceServiceInfo 返回的 sections 构成（一次看清全卡） ──
             runCatching {
                 val mgr3 = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceCardDataMgr")
@@ -477,6 +535,35 @@ object ControlCenterNoiseHook : HookContext() {
     private const val OUR_PROD = "00VVD9"
 
     /** 读 Settings.Global["magicorig_last_anc"]（bluetooth 进程写入的用户默认档位） */
+    /**
+     * 任务6：耳机是否在线。bluetooth 进程在电量数据到达时写 "1"、断连时写 "0"
+     * （Settings.Global["magicorig_connected"]）。默认/无记录 = false —— 断连后球不注入。
+     */
+    private fun isOurConnected(): Boolean = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+            ?: return false
+        android.provider.Settings.Global.getString(app.contentResolver, "magicorig_connected") == "1"
+    }.getOrDefault(false)
+
+    /** 任务2：设备中心卡片电量 —— 读跨进程电量（L90,R85）取双耳平均，无数据返回 null */
+    private fun batteryLevelForCard(): Int? = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+            ?: return null
+        val raw = android.provider.Settings.Global.getString(app.contentResolver, "magicorig_battery")
+            ?: return null
+        if (!raw.contains(",")) return null
+        val l = raw.substringBefore(',').removePrefix("L").toIntOrNull()
+        val r = raw.substringAfter(',').removePrefix("R").toIntOrNull()
+        when {
+            l != null && r != null -> (l + r) / 2
+            l != null -> l
+            r != null -> r
+            else -> null
+        }
+    }.getOrNull()
+
     private fun readLastAnc(): String? = runCatching {
         val app = Class.forName("android.app.ActivityThread")
             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context

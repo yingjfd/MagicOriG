@@ -453,7 +453,11 @@ object RfcommController {
                 mShowedConnectedToast = true
             }
             HuaweiStrongToastUtil.showPodsBatteryToast(ctx, currentBatteryParams!!)
-            HuaweiStrongToastUtil.showBtNotification(ctx, mDevice, currentBatteryParams!!)
+            // ★ 任务4：双耳电量通知迁移到「音频切换」app 的连接耳机通知（imedia.sws），
+            //   格式「原道OriG in 左耳 xx% 右耳 xx%」—— 蓝牙进程不再独立弹电量通知。
+            // HuaweiStrongToastUtil.showBtNotification(ctx, mDevice, currentBatteryParams!!)
+            // 取消旧通知（迁移后清掉可能残留的历史通知）
+            runCatching { HuaweiStrongToastUtil.cancelPodsNotification(ctx) }
             changeUIBatteryStatus(currentBatteryParams!!)
             // 跨进程电量通道：SharedPreferences 是 bluetooth 私有目录，Settings/NoticeFlow 读不到，
             // 转存 Settings.Global（全进程只读可见），供通知 hook 追加电量。
@@ -462,6 +466,9 @@ object RfcommController {
                 android.provider.Settings.Global.putString(
                     res, "magicorig_battery", "L${left.battery},R${right.battery}"
                 )
+                // 连接态信号（任务6）：电量数据到达 = 耳机在线；断连时 disconnectedPod 置 0。
+                // 设备中心球列表注入据此门控 —— 断连后球/卡片消失。
+                android.provider.Settings.Global.putString(res, "magicorig_connected", "1")
                 Log.i(TAG, "电量已写入 Settings.Global: L${left.battery},R${right.battery}")
             }.onFailure { Log.w(TAG, "Global 写入失败: ${it.javaClass.simpleName}") }
         }.onFailure { Log.e(TAG, "battery toast/notification failed", it) }
@@ -584,6 +591,8 @@ object RfcommController {
         // 断联时移除电量通知 —— 此前 cancelPodsNotification 从未被调用，导致通知不消失。
         runCatching {
             HuaweiStrongToastUtil.cancelPodsNotification(context)
+            // 任务6：断连置 0 → 设备中心球列表注入据此消失
+            android.provider.Settings.Global.putString(context.contentResolver, "magicorig_connected", "0")
             Log.i(TAG, "已移除电量通知（断联 ${device.address}）")
         }.onFailure { Log.w(TAG, "cancelPodsNotification failed", it) }
         try {

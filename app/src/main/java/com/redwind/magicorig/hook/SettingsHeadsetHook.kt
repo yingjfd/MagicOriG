@@ -177,7 +177,11 @@ object SettingsHeadsetHook : HookContext() {
                 skipAncDispatch.set(true)
                 handler.postDelayed({ skipAncDispatch.set(false) }, 5500L)
                 // ── 恢复上次使用的档位（只改 UI 选中态，不下发给耳机）──
+                // ★ bug3 修复：Q 会同步回调 listener.onMultiStateClicked → 广播下发。
+                //   原实现 skip 窗口 5.5s 关、Q 在 6.0s 调 —— 0.5s 间隙里广播不被拦
+                //   → 进页面自动切到默认降噪。这里把 Q 包进新的 skip 窗口。
                 handler.postDelayed({
+                    skipAncDispatch.set(true)
                     runCatching {
                         val app = Class.forName("android.app.ActivityThread")
                             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
@@ -202,6 +206,9 @@ object SettingsHeadsetHook : HookContext() {
                             .invoke(pref, modeByte)
                         Log.i(TAG, "已恢复上次档位 UI: status=$last → modeByte=0x${"%02X".format(modeByte)}")
                     }.onFailure { Log.w(TAG, "恢复上次档位失败: ${it.javaClass.simpleName}: ${it.message}") }
+                    // Q 同步触发 onMultiStateClicked（回调随 invoke 同步发生），
+                    // 800ms 兜底覆盖可能的异步路径后关闭 skip 窗口
+                    handler.postDelayed({ skipAncDispatch.set(false) }, 800L)
                 }, 6000L)
                 result
             }
