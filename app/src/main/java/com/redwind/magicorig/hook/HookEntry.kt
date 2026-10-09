@@ -43,6 +43,10 @@ class HookEntry : XposedModule() {
             // ── SystemUI（标准 Android）──────────────────────────────────
             "com.android.systemui" -> {
                 loadHook(SystemUIHeadsetIconHook, param.classLoader, param.packageName)
+                // 双保险：controlviewnew/deviceservicecard 类可能经 ControlCenterAARProvider
+                // 被 systemui 进程加载（AAR 模式），此时 controlcenter 包 scope 钩不到。
+                // 类不存在时 ControlCenterNoiseHook 内部 runCatching 安全失败。
+                loadHook(ControlCenterNoiseHook, param.classLoader, param.packageName)
             }
 
             // ── 蓝牙服务（标准 Android）── 核心 Hook 入口 ────────────────

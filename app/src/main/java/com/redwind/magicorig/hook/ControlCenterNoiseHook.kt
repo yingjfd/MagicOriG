@@ -96,14 +96,14 @@ object ControlCenterNoiseHook : HookContext() {
                         Log.w(TAG, "→→ 已广播 ANC status=$status (设备中心)")
                     }.onFailure { Log.w(TAG, "广播失败: ${it.javaClass.simpleName}") }
                 } else {
-                    Log.w(TAG, "nc=$nc 不支持，跳过广播")
+            Log.w(TAG, "nc=$nc 不支持，跳过广播")
                 }
                 // 保留原调用：让荣耀回调（onResult/onError）正常触发，复位 isSetting/高亮
                 chain.proceed()
             }
             Log.i(TAG, "installed: PropertyUtils.setNoiseCtrlMode [设备中心下发桥]")
         }.onFailure {
-            Log.w(TAG, "install setNoiseCtrlMode failed: ${it.javaClass.simpleName}: ${it.message}")
+            Log.w(TAG, "install setNoiseCtrlMode failed (可能本进程无此类): ${it.javaClass.simpleName}")
         }
 
         // ── 3) 观察点击（4个早退排障用） ──

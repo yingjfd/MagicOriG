@@ -56,3 +56,5 @@ lsp-manager.apk
 bm*.txt
 btc.txt
 ui.xml
+
+tools/shot.py
