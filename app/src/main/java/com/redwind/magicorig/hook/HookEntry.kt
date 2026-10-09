@@ -61,6 +61,11 @@ class HookEntry : XposedModule() {
                 loadHook(MediaSwsBatteryHook, param.classLoader, param.packageName)
             }
 
+            // ── 设备中心（控制中心降噪卡）── 第三方耳机可调降噪 ─────
+            "com.hihonor.controlcenter" -> {
+                loadHook(ControlCenterNoiseHook, param.classLoader, param.packageName)
+            }
+
             // ── 荣耀耳机面板（电量 / 降噪 UI 所在进程）────────────────
             "com.hihonor.audioaccessorymanager" -> {
                 loadHook(HonorEarphoneHook, param.classLoader, param.packageName)

@@ -12,5 +12,7 @@
         <item>com.hihonor.audioaccessorymanager</item>
         <!-- 音频切换（荣耀 SWS 耳机服务）：在通知上追加耳机电量 -->
         <item>com.hihonor.imedia.sws</item>
+        <!-- 设备中心（控制中心降噪卡）：第三方耳机可调降噪 -->
+        <item>com.hihonor.controlcenter</item>
     </string-array>
 </resources>

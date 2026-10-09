@@ -1286,6 +1286,112 @@ setOrder(410)
 - **不重启手机**；只允许 `svc bluetooth disable/enable`（软开关）、`force-stop`、`setprop ctl.restart zygote`（软重启，已授权）。
 - 上述坑 1–9 全部通过**软重启蓝牙/force-stop Settings** 解决，**全程未软重启 zygote、未重启手机**。
 
+---
+
+## 任务4：设备中心适配逆向（round 1–5，代码完成待验证）
+
+> 用户指正：设备中心在 **`com.hihonor.nearby` / `com.hihonor.synergy`**，此前逆向的
+> `DeviceControlCenter` 方向部分有效（卡片渲染在 controlcenter，数据在 nearby）。
+
+### 1. APK 归属（aapt2 + 字节扫描实测）
+
+| 包 | APK | 发现 |
+|---|-----|------|
+| `com.hihonor.nearby` | `/system/app/HnNearby/HnNearby.apk` (45MB) | 内嵌 **devicemanager 服务族**（`DeviceManagerService`/`BleDeviceManagerService`/`DeviceInfoService`）+ `message/EarphoneCfgChangeMessage`；dex 中文仅"耳机"×2（跨平台文案），**无降噪 UI** |
+| `com.hihonor.synergy` | `/system/app/Synergy/Synergy.apk` | 纯协同服务（通知/消息共享），与耳机降噪无关 |
+| `com.hihonor.controlcenter` | `/system/priv-app/DeviceControlCenter/DeviceControlCenter.apk` | **降噪卡渲染地**：`NoiseControl x12`、`Earphone x172` |
+
+> 教训：**扫中文必须按 bytes 搜（UTF-8/UTF-16LE）或 UTF8 解码**，Latin1 解码搜中文恒为 0，会误判。
+
+### 2. 降噪卡渲染链（controlcenter dex 反汇编）
+
+```
+DeviceServiceCardDataMgr.genDeviceServiceInfo(deviceId)
+  ├ createEarphoneBatterySection(LinkDevice)
+  ├ createEarphoneNoiseSection(LinkDevice)            ← 降噪卡创建
+  └ DeviceServiceInfo{deviceId, deviceName, batteryLevel, serviceSections, isOnline}
+DeviceServiceCardAdapter.bindServiceSections → addServiceSection(LinearLayout, ServiceSection)
+  → EarphoneNoiseSectionController.addEarphoneNoiseSection(layout, section, str)
+```
+
+### 3. `createEarphoneNoiseSection` 关键结论（唯一退出 = LinkDevice null）
+
+```java
+data = EarphoneNoiseData.fromBatteryData(info.getBatteryData());   // DeviceBallManager 查
+if (data == null) {                    // ← 我们的耳机走这里
+    data = new EarphoneNoiseData();
+    data.setSupportedModes(new ArrayList<>());   // 空 → 按钮全灰
+    data.setCurrentMode(NoiseMode.UNKNOWN);
+}
+s.setTitle(R.string.earphone_noise_control_title); s.setSectionType(EARPHONE_NOISE);
+return s;                               // 卡片照建，只是按钮不可点
+```
+
+### 4. 点击链与 4 个早退
+
+```
+EarphoneNoiseSectionController.onNoiseModeClick(NoiseMode)
+  早退×4: showStatus==DISABLED / isSetting / isWearStateDisabledMode(mode) / 已是当前模式
+  → highlightSingleMode(mode); isSetting = true
+  → ncValue = EarphoneNoiseData.toNcModeValue(mode)
+  → PropertyUtils.setNoiseCtrlMode(deviceId, ncValue, cb)     ★ 下发（static）
+       cb: c2.s$b { onResult(String), onError(Exception), onResultWithKey(Map) }
+  → DFXUtils.reportEarphoneModeAsync(...)
+```
+
+**`toNcModeValue` 映射**（反汇编 `{ordinal→value}` = `{0:1, 1:2, 2:0, 3:3, 4:-1}`）：
+推定枚举序 → **`1=降噪(nc) 2=AWARENESS 0=OFF 3=ADAPTIVE -1=UNKNOWN`**
+
+**NoiseMode 枚举常量**：`NOISE_CANCELLATION / AWARENESS / OFF / ADAPTIVE / UNKNOWN`
+
+### 5. 设备列表总闸（"没添加进去"的根因）
+
+```java
+ControlCenterProvider.getDeviceList(): DccResult {
+    dm = profile.getDeviceManager();
+    if (dm == null || !dm.hasConnected()) return err;      // nearby 服务未就绪
+    for (Device d : dm.getDevices())                       // ★ 唯一设备来源
+        list.add(new LinkDevice(getDeviceUdid(d), name, type, nodeId, false, online, prodId));
+    result.setExt(JsonUtils.sGson.toJson(list));
+}
+ControlCenterProvider.getLinkDeviceFromDeviceManager(udid) {
+    dev = dm.getDeviceByUdid(udid);  if (dev == null) return null;   // ← 不在 devicemanager 即消失
+}
+```
+
+**根因**：我们的耳机不在 `devicemanager.getDevices()` → 不进设备中心列表。
+
+### 6. 注入所需数据（全部实测拿到）
+
+| 项 | 值 |
+|---|---|
+| `LinkDevice` Gson 字段 | `deviceId / deviceName / hnDeviceType / deviceNodeId / macAddress / btMacAddress / prodId / isSelfDevice / hnOnLineTypeList` |
+| 类型枚举 `HnDeviceProductType` | **`Third_EarPhone`**（第三方耳机）/ `EarPhone`（荣耀）/ Car, TV, Watch, Phone, Pad, PC, Printer… 共 16 |
+| 我们设备 | `mac=18:5C:A1:52:10:36` `prodId=00VVD9` `name=原道 OriG in` |
+
+### 7. 适配实现 `ControlCenterNoiseHook`（scope: `com.hihonor.controlcenter`）
+
+| # | Hook | 作用 |
+|---|------|------|
+| 1 | `ControlCenterProvider.getDeviceList()` | ext JSON 数组 append 我们的 LinkDevice（**纯字符串**，已含则跳过、ext 异常不破坏）→ 耳机出现在列表 |
+| 2 | `EarphoneNoiseData.fromBatteryData(BatteryData)` | 原返回 **null 才**注入 `[NOISE_CANCELLATION, AWARENESS, OFF]` + 按 `Settings.Global[magicorig_last_anc]` 恢复 currentMode；非 null 不干预（不影响荣耀自家耳机）→ 按钮点亮 |
+| 3 | `PropertyUtils.setNoiseCtrlMode(String,int,cb)` | `nc1→readLastAnc()(用户默认档位5/4/3)`、`nc2→2`、`nc0→1` → 广播 `ACTION_ANC_SELECT` → **复用已打通 bluetooth 进程 SPP 0x4E 链路**；`proceed()` 保留原回调复位 isSetting |
+| 4 | `onNoiseModeClick(NoiseMode)` | 观察点 |
+
+接线：`HookEntry` 分支 / `scope.list` / `strings.xml` xposedscope 均加 `com.hihonor.controlcenter`。
+
+### 8. 待设备验证（设备连续离线 5 轮）
+
+```
+adb install -r app/build/outputs/apk/release/app-release.apk
+adb shell am force-stop com.hihonor.controlcenter
+# 1) grep "ENTRY LOADED pkg=com.hihonor.controlcenter" —— 无则需 LSPosed 里重开模块
+# 2) 打开设备中心截图：耳机是否出现 / 按钮是否点亮
+# 3) 点降噪 → 看 "★ setNoiseCtrlMode(deviceId, nc=1)" → "→→ 已广播 ANC status=5"
+#    → bluetooth 进程 SPP 写出 4E 05 00 00 01 02 <mode> 00
+```
+
+
 
 
 
