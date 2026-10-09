@@ -80,6 +80,7 @@ object MediaSwsBatteryHook : HookContext() {
                         Log.i(TAG, "RemoteViews 文本候选(id=${chain.args.getOrNull(0)}): '$t'")
                     }
                     val out = when {
+                        t.contains("左耳") && t.contains("%") -> null   // 已是电量格式，幂等不动
                         t.contains("OriG") || t.contains("原道") || t.contains("18:5C") -> OUR_TITLE
                         MATCH_KEYWORDS.any { t.contains(it) } &&
                             (t.contains("连接") || t.contains("音频") || t.contains("输出设备") || t.contains("蓝牙")) -> bat
