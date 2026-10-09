@@ -127,9 +127,9 @@ targetApiVersion=102
 - 确保耳机已连接 A2DP
 - 重启 Settings 进程：`adb shell am force-stop com.android.settings`
 
-### 控制中心磁贴不出现
+### 设备中心磁贴不出现
 
-下拉控制中心 → 点编辑（铅笔图标）→ 在底部找到 **MagicOriG** → 拖入
+下拉控制中心 → 点编辑→ 拖出 **设备中心** 到主栏
 
 ### ADB 日志
 
