@@ -1470,6 +1470,75 @@ DeviceBallLayoutManager.createRemoteDeviceBalls()
 - `NewControlHomeActivity`「设备中心」页 = 荣耀**账号**互联空间（空态文案要登录荣耀账号），
   蓝牙耳机不归它管 —— hook 触发但不渲染；真正目标是**控制中心面板的「设备中心」卡片条球区**
 
+---
+
+## 任务4实战记录续（round 17–22）：降噪 section 的三道门与注册表兜底
+
+### 1. 卡片数据装配链（全反汇编）
+
+```
+点球 → DeviceServiceCardDataMgr.createDeviceServiceCard
+    online = ballView.isOnline()                     ← ★ 分流开关
+    online ? genDeviceServiceInfo(devId,…) : DeviceServiceCardOffline.genOfflineDeviceServiceInfo(…)
+genDeviceServiceInfo:
+    dev = c2.s.n().o(devId)                          ← ★★ LinkDevice 注册表
+    if (dev == null) { log("linkDevice is null"); return null; }   ← sections=null 根因
+    info = new DeviceServiceInfo(devId, dev.getDeviceName())
+    config = DeviceLayoutConfig.selectLayout(type, isSelf, true)
+    rule   = c2.s.n().u(...)
+    createSections(config, selfDev, remoteDev, rule)
+createSections 三道门：
+    门① i2.b.g(dev) —— 位掩码：(type.index & EarPhone.index) || (type.index & Third_EarPhone.index) → 必过 ✓
+    门②③ config.hasSection(EARPHONE_BATTERY / EARPHONE_NOISE) —— hasSection = layoutMask 位包含
+        REMOTE_EARPHONE 的 mask 由 <clinit> or 进 EARPHONE_BATTERY+EARPHONE_NOISE ✓（含 IOT/CONNECT/MANAGER）
+        selectLayout switch 对 Third_EarPhone 正确进 REMOTE_EARPHONE（hook 无★触发=返回本就对）
+    → createEarphoneBatterySection / createEarphoneNoiseSection（无条件建卡，数据 fromBatteryData 注入）
+```
+
+### 2. 在线态分流（离线卡根因）
+
+- `ballView.isOnline()` 由 devicemanager 推送驱动（`DeviceBallManager.updateDeviceOnlineStatus`），
+  第三方耳机无推送 → 恒 false → 走离线卡（只有响铃/连接/设置，**无电量无降噪**）
+- 修复（球创建时三层）：`adapter.setIsOnline(true)` + 主动调
+  `DeviceBallManager.updateDeviceOnlineStatus(MAC, true)`（公开状态入口）
+
+### 3. deviceInfoMap 兜底
+
+`DeviceBallManager.deviceInfoMap`（HashMap，与列表出口独立）无我们的设备 →
+`getDeviceInfoById` 返 null → `updateDeviceOnlineStatus` 空转 / `createEarphoneNoiseSection`
+拿不到 batteryData / 电量查询断链 → hook 查询出口返回缓存 DeviceInfo。
+
+### 4. c2/s 注册表兜底（第10环，最后一环）
+
+`c2.s.o(deviceId): LinkDevice` 查不到 → gen 早退 return null → createSections 永不执行。
+修复：hook 出口，null 时注入 7参 LinkDevice
+`(udid=MAC, name, type=Third_EarPhone, nodeId=MAC, isLocal=false, online=[], prodId=00VVD9)`。
+实测日志：`★ c2.s.o(OUR_MAC) null → 注入 LinkDevice` ✓
+
+### 5. 实测日志（各环触发证据）
+
+```
+▶ createDeviceBall(id=18:5C:A1:52:10:36) → OK        球创建
+★ setIsOnline(true) / ★ updateDeviceOnlineStatus(MAC, true)   在线态
+▶ genDeviceServiceInfo(dev=18:5C…) sections=null      （注册表兜底前）
+★ c2.s.o(OUR_MAC) null → 注入 LinkDevice             （兜底生效）
+▶ createSections(config=LOCAL_PHONE) → size=1         （本机球，装配观察正常）
+```
+
+### 6. 验证流程的两个大坑
+
+1. **USB 连接方式对话框**每次插线弹出且盖在最上层 —— 所有 `input tap` 被它拦截，
+   曾造成"hook 零触发"假象。验证前必先 `input tap 370 2519`（取消）。
+2. **焦点是多 display 的**：`dumpsys window | grep mCurrentFocus` 第一行可能是另一 display 的
+   null —— 取**含 `controlviewnew` 的行**判断前台，别取 `$cur[0]`。
+
+### 7. 待最终验证
+
+- [ ] 打开耳机球 → `createSections(config=REMOTE_EARPHONE)` + `▶ createEarphoneNoiseSection → SEC(...)`
+- [ ] 卡片出现「噪声控制」三按钮（fromBatteryData 注入）
+- [ ] 点降噪 → `setNoiseCtrlMode(nc=1)` → `已广播 status=5` → bluetooth SPP `4E 05 00 00 01 02 10 00`
+
+
 
 
 

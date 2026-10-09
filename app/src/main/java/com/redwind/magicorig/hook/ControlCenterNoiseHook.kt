@@ -240,6 +240,27 @@ object ControlCenterNoiseHook : HookContext() {
                 }
                 Log.i(TAG, "installed: DeviceBallManager.getShowRemoteDeviceNum [数量修正]")
             }
+            // ★ 根上修：DeviceBallManager.deviceInfoMap 无我们的设备 → getDeviceInfoById 返 null
+            //   → updateDeviceOnlineStatus 空转 / createEarphoneNoiseSection 拿不到 batteryData /
+            //   createDeviceServiceCard 电量查询断链。统一在查询出口兜底（缓存单例）。
+            var ourInfoCache: Any? = null
+            mgrCls.declaredMethods.firstOrNull { it.name == "getDeviceInfoById" }?.let { m ->
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    val id = chain.args.getOrNull(0)
+                    val ret = chain.proceed()
+                    if (id == OUR_MAC && ret == null) {
+                        val cached = ourInfoCache ?: buildOur()?.also { ourInfoCache = it }
+                        if (cached != null) {
+                            Log.w(TAG, "★ getDeviceInfoById(OUR_MAC) null → 兜底 DeviceInfo")
+                        }
+                        cached
+                    } else {
+                        ret
+                    }
+                }
+                Log.i(TAG, "installed: DeviceBallManager.getDeviceInfoById [map 兜底]")
+            }
 
             // ── 决定性观察：球创建到哪一步（id / 是否返回 null） ──
             runCatching {
@@ -253,16 +274,168 @@ object ControlCenterNoiseHook : HookContext() {
                         val info = chain.args.getOrNull(0)
                         val id = runCatching { info?.javaClass?.getMethod("getId")?.invoke(info) }.getOrNull()
                         val ret = chain.proceed()
+                        // 在线态分流（决定电量/降噪 section 走 online 路径）在
+                        // BasicDeviceBallView.isOnline()，由 devicemanager 推送驱动，
+                        // 第三方耳机无此推送 → 恒 false → 走离线卡（无电量无降噪）。
+                        // 球创建成功后直接把 adapter 置在线（setIsOnline 会同步到 ballView）。
+                        if (id == OUR_MAC && ret != null) {
+                            runCatching {
+                                ret.javaClass.getMethod("setIsOnline", Boolean::class.javaPrimitiveType)
+                                    .invoke(ret, true)
+                                Log.w(TAG, "★ setIsOnline(true) on adapter ($OUR_NAME)")
+                            }.onFailure { Log.w(TAG, "setIsOnline 失败: ${it.javaClass.simpleName}: ${it.message}") }
+                            // ★ 主动驱动在线刷新：updateDeviceOnlineStatus 是 DeviceBallManager
+                            //   的公开状态入口（devicemanager 推送也走它），会同步 ballView.isOnline
+                            runCatching {
+                                val mCls = findClass("com.hihonor.controlviewnew.manager.DeviceBallManager")
+                                val inst = mCls.getMethod("getInstance").invoke(null)
+                                mCls.getMethod(
+                                    "updateDeviceOnlineStatus",
+                                    String::class.java,
+                                    Boolean::class.javaPrimitiveType
+                                ).invoke(inst, OUR_MAC, true)
+                                Log.w(TAG, "★ updateDeviceOnlineStatus($OUR_MAC, true)")
+                            }.onFailure { Log.w(TAG, "updateDeviceOnlineStatus 失败: ${it.javaClass.simpleName}: ${it.message}") }
+                        }
                         if (id == OUR_MAC || ret == null) {
                             Log.w(TAG, "▶ createDeviceBall(id=$id) → ${if (ret == null) "NULL(失败)" else "OK"}")
                         }
                         ret
                     }
-                    Log.i(TAG, "installed: DeviceBallLayoutManager.createDeviceBall [球创建观察]")
+                    Log.i(TAG, "installed: DeviceBallLayoutManager.createDeviceBall [球创建观察+在线态]")
                 } else {
                     Log.w(TAG, "createDeviceBall 未找到")
                 }
             }.onFailure { Log.w(TAG, "createDeviceBall 观察失败: ${it.javaClass.simpleName}") }
+
+            // ── 6) 布局修正（关键门③）：
+            //    createSections 里 {电量,降噪} section 的前置条件是
+            //    DeviceLayoutConfig.hasSection(...)，即 selectLayout(type).layoutMask 含位。
+            //    REMOTE_EARPHONE 的 mask 明确含 EARPHONE_BATTERY+EARPHONE_NOISE（clinit or 运算），
+            //    但 selectLayout 的 switch 可能把 Third_EarPhone 落到 default → REMOTE_PHONE
+            //    （与"卡片只有响铃/连接、无电量无降噪"实拍吻合）→ 强制归位。
+            runCatching {
+                val cfgCls = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceLayoutConfig")
+                val sel = cfgCls.declaredMethods.first {
+                    it.name == "selectLayout" && it.parameterCount >= 1
+                }.apply { isAccessible = true }
+                val remoteEar = cfgCls.enumConstants?.firstOrNull { it.toString() == "REMOTE_EARPHONE" }
+                    ?: throw IllegalStateException("REMOTE_EARPHONE 枚举不存在")
+                module.hook(sel).intercept { chain ->
+                    val typeName = chain.args.getOrNull(0)?.toString()
+                    val ret = chain.proceed()
+                    if (typeName == "Third_EarPhone" && ret !== remoteEar) {
+                        Log.w(TAG, "★ selectLayout(Third_EarPhone) $ret → REMOTE_EARPHONE")
+                        remoteEar
+                    } else {
+                        ret
+                    }
+                }
+                Log.i(TAG, "installed: DeviceLayoutConfig.selectLayout [布局修正→REMOTE_EARPHONE]")
+            }.onFailure {
+                Log.w(TAG, "selectLayout hook 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
+            // ── 7) 决定性观察：降噪 section 创建（区分"门③拒绝"vs"创建返回null"） ──
+            runCatching {
+                val mgr2 = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceCardDataMgr")
+                val mNoise = mgr2.declaredMethods.filter { it.name == "createEarphoneNoiseSection" }
+                val mBat = mgr2.declaredMethods.filter { it.name == "createEarphoneBatterySection" }
+                for (m in mNoise + mBat) {
+                    m.isAccessible = true
+                    module.hook(m).intercept { chain ->
+                        val dev = chain.args.getOrNull(0)
+                        val devId = runCatching { dev?.javaClass?.getMethod("getDeviceId")?.invoke(dev) }.getOrNull()
+                        val ret = chain.proceed()
+                        Log.w(TAG, "▶ ${m.name}(deviceId=$devId) → ${if (ret == null) "null" else "SEC(" + ret.hashCode() + ")"}")
+                        ret
+                    }
+                }
+                Log.i(TAG, "installed: createEarphoneNoise/BatterySection [section 创建观察]")
+            }.onFailure {
+                Log.w(TAG, "section 观察失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
+            // ── 7b) createSections 观察：config 布局 + 返回装配数（定位 sections=null 环节） ──
+            runCatching {
+                val mgr4 = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceCardDataMgr")
+                val cs = mgr4.declaredMethods.first {
+                    it.name == "createSections" && it.parameterCount >= 3
+                }.apply { isAccessible = true }
+                module.hook(cs).intercept { chain ->
+                    val config = chain.args.getOrNull(0)
+                    val ret = chain.proceed()
+                    val size = (ret as? List<*>)?.size
+                    Log.w(TAG, "▶ createSections(config=$config) → size=$size")
+                    ret
+                }
+                Log.i(TAG, "installed: DeviceServiceCardDataMgr.createSections [装配观察]")
+            }.onFailure {
+                Log.w(TAG, "createSections 观察失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
+            // ── 9) ★ 最后一环：genDeviceServiceInfo 开头 c2.s.o(deviceId) 查 LinkDevice，
+            //    查不到 → log("linkDevice is null") → return null → createSections 永不执行
+            //    （sections=null 根因）。在 c2/s 注册表查询出口兜底注入 LinkDevice。
+            runCatching {
+                val sCls = findClass("c2.s")
+                val o = sCls.declaredMethods.first {
+                    it.name == "o" && it.parameterCount == 1 &&
+                            it.returnType.name.endsWith("LinkDevice")
+                }.apply { isAccessible = true }
+                val ldCls = findClass("com.hihonor.controlcenter_aar.bean.LinkDevice")
+                val typeCls = findClass("com.hihonor.controlcenter_aar.bean.HnDeviceProductType")
+                val third = typeCls.enumConstants?.firstOrNull { it.toString() == "Third_EarPhone" }
+                    ?: throw IllegalStateException("Third_EarPhone 枚举不存在")
+                val ctor = ldCls.declaredConstructors.firstOrNull {
+                    it.parameterCount == 7 && it.parameterTypes[0] == String::class.java
+                }?.apply { isAccessible = true }
+                    ?: throw IllegalStateException("LinkDevice 7参构造不存在")
+                var ldCache: Any? = null
+                module.hook(o).intercept { chain ->
+                    val id = chain.args.getOrNull(0)
+                    val ret = chain.proceed()
+                    if (id == OUR_MAC && ret == null) {
+                        val ld = ldCache ?: runCatching {
+                            // (udid, name, type, nodeId, isLocal, onlineList, prodId)
+                            ctor.newInstance(
+                                OUR_MAC, OUR_NAME, third, OUR_MAC,
+                                false, java.util.ArrayList<Any>(), OUR_PROD
+                            )
+                        }.getOrNull()?.also { ldCache = it }
+                        if (ld != null) Log.w(TAG, "★ c2.s.o(OUR_MAC) null → 注入 LinkDevice")
+                        ld
+                    } else {
+                        ret
+                    }
+                }
+                Log.i(TAG, "installed: c2.s.o [LinkDevice 注册表兜底]")
+            }.onFailure {
+                Log.w(TAG, "c2.s.o hook 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
+            // ── 8) 全景观察：genDeviceServiceInfo 返回的 sections 构成（一次看清全卡） ──
+            runCatching {
+                val mgr3 = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceCardDataMgr")
+                val gen = mgr3.declaredMethods.first {
+                    it.name == "genDeviceServiceInfo" && it.parameterCount >= 2
+                }.apply { isAccessible = true }
+                module.hook(gen).intercept { chain ->
+                    val ret = chain.proceed()
+                    runCatching {
+                        val secs = ret?.javaClass?.getMethod("getServiceSections")?.invoke(ret) as? List<*>
+                        val types = secs?.joinToString(",") {
+                            it?.javaClass?.simpleName?.take(28) ?: "null"
+                        } ?: "?"
+                        val devId = chain.args.getOrNull(0)
+                        Log.w(TAG, "▶ genDeviceServiceInfo(dev=$devId) sections=${secs?.size} [$types]")
+                    }.onFailure { Log.w(TAG, "gen 读取失败: ${it.javaClass.simpleName}") }
+                    ret
+                }
+                Log.i(TAG, "installed: genDeviceServiceInfo [全景观察]")
+            }.onFailure {
+                Log.w(TAG, "gen 观察失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
         }.onFailure {
             Log.w(TAG, "install DeviceBallManager 注入失败: ${it.javaClass.simpleName}: ${it.message}")
         }
