@@ -172,10 +172,105 @@ object ControlCenterNoiseHook : HookContext() {
         }.onFailure {
             Log.w(TAG, "install getDeviceList failed: ${it.javaClass.simpleName}: ${it.message}")
         }
+
+        // ── 5) 球列表注入：设备中心（NewControlHomeActivity/控制中心）用的是
+        //    DeviceBallManager 的球体系，不走 getDeviceList（实测 hook 装上但零触发）。
+        //    在 getAllDeviceInfo/getDeviceInfoList 返回前 append 我们的 DeviceInfo，
+        //    batteryData 保持 null → fromBatteryData 注入 hook 兜底点亮按钮。
+        runCatching {
+            val mgrCls = findClass("com.hihonor.controlviewnew.manager.DeviceBallManager")
+            val infoCls = findClass("com.hihonor.controlviewnew.info.DeviceInfo")
+            val typeCls = findClass("com.hihonor.controlcenter_aar.bean.HnDeviceProductType")
+            val thirdEar = typeCls.enumConstants?.firstOrNull { it.toString() == "Third_EarPhone" }
+                ?: typeCls.enumConstants?.firstOrNull()
+            val ctor = infoCls.declaredConstructors.firstOrNull {
+                it.parameterCount == 7 && it.parameterTypes[0] == String::class.java
+            }
+            if (thirdEar == null || ctor == null) throw IllegalStateException("DeviceInfo 构造/类型不可用")
+            ctor.isAccessible = true
+
+            fun buildOur(): Any? = runCatching {
+                val info = ctor.newInstance(OUR_MAC, OUR_NAME, thirdEar, 0, true, false, true)
+                // 7参构造不含 prodId/btMacAddress —— 球渲染按 prodId 查图标资源，
+                // null 会静默跳过渲染（列表有数据、UI 不显示的根因）
+                runCatching { infoCls.getMethod("setProdId", String::class.java).invoke(info, OUR_PROD) }
+                runCatching { infoCls.getMethod("setBtMacAddress", String::class.java).invoke(info, OUR_MAC) }
+                runCatching { infoCls.getMethod("setName", String::class.java).invoke(info, OUR_NAME) }
+                runCatching { infoCls.getMethod("setIndex", Int::class.javaPrimitiveType).invoke(info, 1) }
+                info
+            }.getOrNull()
+
+            var injectedCount = 0
+            // getAllDeviceInfo/getDeviceInfoList=全量，getShowRemoteDeviceInfoList=UI 展示过滤出口
+            for (mName in listOf("getAllDeviceInfo", "getDeviceInfoList", "getShowRemoteDeviceInfoList")) {
+                val m = mgrCls.declaredMethods.firstOrNull { it.name == mName } ?: continue
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    val result = chain.proceed() as? java.util.List<*>
+                    if (result != null) {
+                        val exists = result.any {
+                            runCatching { it?.javaClass?.getMethod("getId")?.invoke(it) == OUR_MAC }.getOrDefault(false)
+                        }
+                        if (!exists) {
+                            buildOur()?.let { info ->
+                                // List<*> 为只读视图，反射调 add；视图可能不可 add（unmodifiable）→ 全程保护
+                                runCatching {
+                                    result.javaClass.getMethod("add", Any::class.java)
+                                        .invoke(result, info)
+                                    injectedCount++
+                                    Log.w(TAG, "★ 球列表已注入 $OUR_NAME → $mName (总数=${result.size})")
+                                }.onFailure {
+                                    Log.w(TAG, "$mName add 失败(视图只读?): ${it.javaClass.simpleName}")
+                                }
+                            }
+                        }
+                    }
+                    result
+                }
+                Log.i(TAG, "installed: DeviceBallManager.$mName [球列表注入]")
+            }
+            // 空态由数量方法决定（"未发现其他设备"）：原值0且我们已注入球 → 至少1
+            mgrCls.declaredMethods.firstOrNull { it.name == "getShowRemoteDeviceNum" }?.let { m ->
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    val n = chain.proceed() as? Int ?: 0
+                    val fixed = if (n <= 0) 1 else n
+                    if (fixed != n) Log.w(TAG, "★ getShowRemoteDeviceNum $n → $fixed")
+                    fixed
+                }
+                Log.i(TAG, "installed: DeviceBallManager.getShowRemoteDeviceNum [数量修正]")
+            }
+
+            // ── 决定性观察：球创建到哪一步（id / 是否返回 null） ──
+            runCatching {
+                val lmCls = findClass("com.hihonor.controlviewnew.widget.DeviceBallLayoutManager")
+                val cmb = lmCls.declaredMethods.firstOrNull {
+                    it.name == "createDeviceBall" && it.parameterCount >= 1
+                }
+                if (cmb != null) {
+                    cmb.isAccessible = true
+                    module.hook(cmb).intercept { chain ->
+                        val info = chain.args.getOrNull(0)
+                        val id = runCatching { info?.javaClass?.getMethod("getId")?.invoke(info) }.getOrNull()
+                        val ret = chain.proceed()
+                        if (id == OUR_MAC || ret == null) {
+                            Log.w(TAG, "▶ createDeviceBall(id=$id) → ${if (ret == null) "NULL(失败)" else "OK"}")
+                        }
+                        ret
+                    }
+                    Log.i(TAG, "installed: DeviceBallLayoutManager.createDeviceBall [球创建观察]")
+                } else {
+                    Log.w(TAG, "createDeviceBall 未找到")
+                }
+            }.onFailure { Log.w(TAG, "createDeviceBall 观察失败: ${it.javaClass.simpleName}") }
+        }.onFailure {
+            Log.w(TAG, "install DeviceBallManager 注入失败: ${it.javaClass.simpleName}: ${it.message}")
+        }
     }
 
     private const val OUR_MAC = "18:5C:A1:52:10:36"
     private const val OUR_NAME = "原道 OriG in"
+    private const val OUR_PROD = "00VVD9"
 
     /** 读 Settings.Global["magicorig_last_anc"]（bluetooth 进程写入的用户默认档位） */
     private fun readLastAnc(): String? = runCatching {

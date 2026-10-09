@@ -23,6 +23,13 @@ class HookEntry : XposedModule() {
 
     @RequiresApi(Build.VERSION_CODES.Q)
     override fun onPackageReady(param: PackageReadyParam) {
+        // 诊断日志：必须在 isFirstPackage 判断之前 —— 否则 first=false 的包会静默退出零日志
+        // （实测 com.hihonor.controlcenter 进程在 LSPosed 日志零记录，怀疑卡在此判断）
+        Log.module = this
+        Log.i(
+            TAG,
+            "onPackageReady pkg=${param.packageName} first=${param.isFirstPackage} loaded=true"
+        )
         if (!param.isFirstPackage) return
 
         // 必须最先绑定 Log.module：Log.* 走的是 module?.log(...)，

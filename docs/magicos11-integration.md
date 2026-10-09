@@ -1391,6 +1391,86 @@ adb shell am force-stop com.hihonor.controlcenter
 #    → bluetooth 进程 SPP 写出 4E 05 00 00 01 02 <mode> 00
 ```
 
+---
+
+## 任务4实战记录（round 6–15）：LSPosed scope 根因与球渲染链
+
+### 1. ★ LSPosed scope 根因（最重要的一课）
+
+**症状**：APK scope.list ✓、db scope 表 ✓（含 controlcenter、enabled=1）、软重启 zygote ✓、
+开 LSPosed manager ✓ —— 进程反复重启，**lspd 日志对 pkg=com.hihonor.controlcenter 零记录**。
+
+**根因**：LSPosed **UI 勾选状态与 db 不同步**。db 写入不算数 —— UI 里该项是**灰色未勾**。
+**解法（一次生效）**：uiautomator 自动化进 MagicOriG 作用域页 → 点「荣耀互联设备中心」勾选框。
+
+```
+ENTRY LOADED pkg=com.hihonor.controlcenter first=true
+installed: fromBatteryData / setNoiseCtrlMode / onNoiseModeClick / getDeviceList → onHook OK
+```
+
+> HookEntry 加的诊断日志（在 `isFirstPackage` 判断**之前**打印）是定位关键：
+> 没有它 → 无法区分"没注入"和"注入后静默 return"。
+
+**UI 自动化路径**（可复跑）：
+```
+am start -n org.lsposed.manager/.ui.activity.MainActivity
+→ 模块 tab (503,2612) → 搜索框输入 Magic → 点卡片 → 作用域列表
+→ 关 USB 对话框点「取消」(370,2519)；input text 会乱序 → 改短词或分段
+```
+
+### 2. 进程拉起方式
+
+```
+am force-stop com.hihonor.controlcenter      # 它不常驻
+su -c 'am start -a honor.action.control_home' # 拉起 NewControlHomeActivity（设备中心）
+# Manifest 另有: devicemanagecenter.DeviceManagerCenterActivity / ShowHiddenDevicesActivity
+```
+
+### 3. 球渲染链（反汇编全程）
+
+```
+DeviceBallManager.getInstance()
+  ├ loadFromProvider()/loadDeviceDataJson()          # 数据源
+  ├ getDeviceInfoList() / getAllDeviceInfo()          # 全量（hook 注入点①）
+  ├ getShowRemoteDeviceInfoList()                     # UI 过滤出口（hook 注入点②）
+  └ getShowRemoteDeviceNum()                          # 空态数量（hook 注入点③ 0→1）
+DeviceBallLayoutManager.createRemoteDeviceBalls()
+  list = getShowRemoteDeviceInfoList()                # ← 含注入的耳机 ✓
+  gridIndexMap.clear(); putAll(SortUtils.DeviceSortUtils(list))   # ★ map 从同一 list 生成
+      DeviceSortUtils: 过滤 isSelf → hasValidIndex(index≥0)
+                       → assignAndFixIndexes / assignIndexesBySort
+                       → result.put(info.getId(), info.getIndex())
+  Collections.sort(list, comparator M)
+  for info: createDeviceBall(info, delay)
+      if (!gridIndexMap.containsKey(id)) 仅 log，不 return
+      gridIndex = gridIndexMap.get(id).intValue()     # 无 id → NPE（注入后有 id，不会）
+      new BasicDeviceBallViewAdapter(context, info)   # ★ 球出生点
+```
+
+**DeviceInfo 注入要点**：7参构造 `(id,name,type,index,isOnline,isSelf,isShow)` **不含 prodId/btMac** →
+必须反射补 `setProdId("00VVD9")/setBtMacAddress(MAC)/setName/setIndex(1)`（prodId null → 图标解析失败静默不渲染）。
+
+### 4. 实测日志（全部成功层）
+
+```
+★ 球列表已注入 → getDeviceInfoList/getAllDeviceInfo (总数=2)
+★ 球列表已注入 → getShowRemoteDeviceInfoList (总数=1)   # 耳机=唯一远程
+▶ createDeviceBall(id=18:5C:A1:52:10:36) → OK ×2        # 球对象创建成功
+```
+
+### 5. 待最终验证（屏幕锁屏时被挡）
+
+- [ ] 球在设备中心卡片条/独立页**显示**（createDeviceBall OK 后的 addView/坐标）
+- [ ] 点球 → 降噪卡三按钮（fromBatteryData 注入）
+- [ ] 点降噪 → `setNoiseCtrlMode(nc=1)` → 广播 status=5 → SPP `4E 05 00 00 01 02 10 00`
+
+### 6. 排除的死胡同
+
+- systemui 不含 controlviewnew 类（AAR 假设不成立，双保险 hook 但 ClassNotFound）
+- `NewControlHomeActivity`「设备中心」页 = 荣耀**账号**互联空间（空态文案要登录荣耀账号），
+  蓝牙耳机不归它管 —— hook 触发但不渲染；真正目标是**控制中心面板的「设备中心」卡片条球区**
+
+
 
 
 
