@@ -30,6 +30,21 @@ import kotlin.concurrent.thread
 @SuppressLint("MissingPermission")
 object SystemUIHeadsetIconHook : HookContext() {
     private const val TAG = "MagicOriG-SystemUI"
+
+    /** 读跨进程电量（"L90,R85"）→ "左耳 90% 右耳 85%"；无数据返回原文占位 */
+    private fun readBatteryLine(): String = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+            ?: return "左耳 --% 右耳 --%"
+        val raw = android.provider.Settings.Global.getString(app.contentResolver, "magicorig_battery")
+            ?: return "左耳 --% 右耳 --%"
+        if (!raw.contains(",")) return "左耳 --% 右耳 --%"
+        val l = raw.substringBefore(',').removePrefix("L").toIntOrNull()
+        val r = raw.substringAfter(',').removePrefix("R").toIntOrNull()
+        val ls = if (l != null && l >= 0) "左耳 $l%" else "左耳 --%"
+        val rs = if (r != null && r >= 0) "右耳 $r%" else "右耳 --%"
+        "$ls $rs"
+    }.getOrDefault("左耳 --% 右耳 --%")
     private const val SLOT = "wireless_headset"
     private const val MAX_RECONNECT_ATTEMPTS = 3
 
@@ -47,6 +62,46 @@ object SystemUIHeadsetIconHook : HookContext() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onHook() {
+        // 0. ★ 任务4：通知文案在 SystemUI 渲染端改写（RemoteViews.apply/reapply 返回的
+        //    View 树 = 渲染前最后一刻）。sws 进程内的 set 层改写实测全部被荣耀混淆
+        //    渲染类（QuaentCrearsaisSusts，动态 classloader 加载、无法 hook）覆盖，
+        //    apply 也发生在 SystemUI 而非 sws —— 只有这里改写必然生效。
+        //    文案匹配足够精确（只有音频设备通知含这两行），误伤面为零。
+        runCatching {
+            val rvCls = Class.forName("android.widget.RemoteViews")
+            var cnt = 0
+            for (mn in arrayOf("apply", "reapply")) {
+                val m = rvCls.declaredMethods.firstOrNull {
+                    it.name == mn && it.parameterCount >= 1 &&
+                            android.view.View::class.java.isAssignableFrom(it.returnType)
+                } ?: continue
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    val ret = chain.proceed()
+                    if (ret is android.view.View) {
+                        var changed = 0
+                        fun walk(v: android.view.View) {
+                            if (v is android.widget.TextView) {
+                                when (val cur = v.text?.toString() ?: "") {
+                                    "当前音频输入输出设备" -> { v.text = "原道 OriG in"; changed++ }
+                                    "原道OriG in" -> { v.text = readBatteryLine(); changed++ }
+                                }
+                            } else if (v is android.view.ViewGroup) {
+                                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+                            }
+                        }
+                        walk(ret)
+                        if (changed > 0) Log.w(TAG, "★★★ SystemUI 通知改写 $changed 处（$mn）")
+                    }
+                    ret
+                }
+                cnt++
+            }
+            Log.i(TAG, "installed: RemoteViews.apply [SystemUI 通知文案改写] ($cnt)")
+        }.onFailure {
+            Log.w(TAG, "install SystemUI apply hook failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+
         // 1. 找 SystemUI 启动时机
         // MagicOS 的 SystemUI 里没有 CentralSurfacesImpl / SystemUIApplication / SystemUI
         // （真机 dexdump 确认），原来固定 hook CentralSurfacesImpl.start 必然 findClass 抛异常。

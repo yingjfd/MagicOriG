@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "at": "2026-10-08T02:13:14.244Z",
+  "at": "2026-10-09T13:22:41.350Z",
   "plugin": "conversation-manager",
   "version": "0.5.1",
   "cjkSearch": {
@@ -10,7 +10,7 @@
       "sessionController": "absent",
       "sessions": "search-unavailable"
     },
-    "attempts": 1,
+    "attempts": 5,
     "calls": 0,
     "cacheHits": 0,
     "added": 0,

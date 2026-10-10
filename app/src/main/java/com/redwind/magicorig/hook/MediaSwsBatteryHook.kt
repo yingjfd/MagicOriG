@@ -31,7 +31,11 @@ object MediaSwsBatteryHook : HookContext() {
                 val matched = bat.isNotEmpty() && MATCH_KEYWORDS.any { text.contains(it) }
                 if (matched && text != OUR_TITLE) {
                     Log.i(TAG, "通知标题改写: '$text' → '$OUR_TITLE'")
-                    chain.args[0] = OUR_TITLE
+                    // chain.args 是只读 List（Collections$UnmodifiableList，直接 set 会抛异常），
+                    // 官方姿势：拷贝成数组后 proceed(newArgs)
+                    val newArgs = chain.args.toTypedArray()
+                    newArgs[0] = OUR_TITLE
+                    return@intercept chain.proceed(newArgs)
                 }
                 chain.proceed()
             }
@@ -54,7 +58,9 @@ object MediaSwsBatteryHook : HookContext() {
                         (text.contains("左耳") && text.contains("右耳") && text.contains("%"))
                     if (!idempotent) {
                         Log.i(TAG, "通知内容改写: '$text' → '$bat'")
-                        chain.args[0] = bat
+                        val newArgs = chain.args.toTypedArray()
+                        newArgs[0] = bat
+                        return@intercept chain.proceed(newArgs)
                     }
                 }
                 chain.proceed()
@@ -75,20 +81,26 @@ object MediaSwsBatteryHook : HookContext() {
                 val bat = readBatteryPair()
                 if (bat.isNotEmpty() && t.isNotBlank()) {
                     val now = System.currentTimeMillis()
-                    if (now - lastRvLogAt > 3000) {   // 观察限频
+                    if (now - lastRvLogAt > 1000) {   // 全量观察（1s 限频）
                         lastRvLogAt = now
-                        Log.i(TAG, "RemoteViews 文本候选(id=${chain.args.getOrNull(0)}): '$t'")
+                        Log.i(TAG, "RV set(id=${chain.args.getOrNull(0)}): '$t'")
                     }
+                    // 对位（按通知栏实测 UI 结构）：
+                    //   标题行（大字）原文「当前音频输入输出设备」→ 「原道 OriG in」
+                    //   内容行（小字）原文「原道OriG in」→ 「左耳 x% 右耳 x%」
+                    //   合并呈现即「原道 OriG in　左耳 x% 右耳 x%」
                     val out = when {
-                        t.contains("左耳") && t.contains("%") -> null   // 已是电量格式，幂等不动
-                        t.contains("OriG") || t.contains("原道") || t.contains("18:5C") -> OUR_TITLE
-                        MATCH_KEYWORDS.any { t.contains(it) } &&
-                            (t.contains("连接") || t.contains("音频") || t.contains("输出设备") || t.contains("蓝牙")) -> bat
+                        t.contains("左耳") && t.contains("%") -> null   // 已是电量，幂等
+                        t == "当前音频输入输出设备" || (t.contains("音频") && t.contains("设备") && t.length <= 15) -> OUR_TITLE
+                        t.contains("OriG") || t.contains("原道") || t.contains("18:5C") -> bat
                         else -> null
                     }
                     if (out != null && out != t) {
-                        Log.i(TAG, "★ RemoteViews 改写: '$t' → '$out'")
-                        chain.args[1] = out
+                        Log.i(TAG, "★ RV 改写(id=${chain.args.getOrNull(0)}): '$t' → '$out'")
+                        // 只读 List → 数组拷贝 + proceed(newArgs)
+                        val newArgs = chain.args.toTypedArray()
+                        newArgs[1] = out
+                        return@intercept chain.proceed(newArgs)
                     }
                 }
                 chain.proceed()
@@ -97,6 +109,109 @@ object MediaSwsBatteryHook : HookContext() {
         }.onFailure {
             Log.w(TAG, "install RemoteViews failed: ${it.javaClass.simpleName}: ${it.message}")
         }
+
+        // ④ ★ 终极层：RemoteViews.apply/reapply 返回的是即将上屏的 View 树 ——
+        //    在这里改 TextView 文本，渲染前最后一刻，不可能被上层覆盖。
+        //    （set 层改写实测有生效日志但 UI 仍显示原文 → 最终 post 的实例绕过了 set 拦截）
+        runCatching {
+            val rvCls = Class.forName("android.widget.RemoteViews")
+            var hookedApply = 0
+            for (mn in arrayOf("apply", "reapply")) {
+                val m = rvCls.declaredMethods.firstOrNull {
+                    it.name == mn && it.parameterCount >= 1 &&
+                            android.view.View::class.java.isAssignableFrom(it.returnType)
+                } ?: continue
+                m.isAccessible = true
+                module.hook(m).intercept { chain ->
+                    val ret = chain.proceed()
+                    val bat = readBatteryPair()
+                    if (bat.isNotEmpty() && ret is android.view.View) {
+                        var changed = 0
+                        fun walk(v: android.view.View) {
+                            if (v is android.widget.TextView) {
+                                val cur = v.text?.toString() ?: ""
+                                when (cur) {
+                                    "当前音频输入输出设备" -> { v.text = OUR_TITLE; changed++ }
+                                    "原道OriG in" -> { v.text = bat; changed++ }
+                                }
+                            } else if (v is android.view.ViewGroup) {
+                                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+                            }
+                        }
+                        walk(ret)
+                        if (changed > 0) Log.i(TAG, "★★ apply 层改写 $changed 处（$mn）")
+                    }
+                    ret
+                }
+                hookedApply++
+            }
+            Log.i(TAG, "installed: RemoteViews.apply/reapply [View 层改写] ($hookedApply)")
+        }.onFailure {
+            Log.w(TAG, "install apply hook failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+
+        // ⑤ ★ 荣耀自有渲染类：通知真正的构建/渲染走混淆类
+        //    android.media.QuaentCrearsaisSusts（栈实证：getNotificationBuilder
+        //    → QuaentCrearsaisSusts.setTextViewText），set 层怎么改都会被它的
+        //    后续逻辑覆盖，UI 永远显示原文。这里 hook 它的 apply 类方法
+        //    （返回 View 的方法），在 View 层最终改写。
+        //    ★ 该类在 onHook 时刻尚未加载（实测 ClassNotFoundException）→ 延迟轮询 hook。
+        Thread {
+            var cls: Class<*>? = null
+            var tries = 0
+            while (cls == null && tries < 60) {
+                cls = runCatching {
+                    Class.forName("android.media.QuaentCrearsaisSusts", false, appClassLoader)
+                }.getOrNull()
+                if (cls == null) { tries++; Thread.sleep(500) }
+            }
+            if (cls == null) {
+                Log.w(TAG, "混淆类 30s 内未出现，放弃 ⑤ hook")
+                return@Thread
+            }
+            runCatching {
+                val ms = cls.declaredMethods.filter {
+                    it.parameterCount >= 1 &&
+                            android.view.View::class.java.isAssignableFrom(it.returnType)
+                }
+                for (m in ms) {
+                    m.isAccessible = true
+                    module.hook(m).intercept { chain ->
+                        val ret = chain.proceed()
+                        val n = rewriteNoticeView(ret)
+                        if (n > 0) Log.i(TAG, "★★★ 混淆类 apply 层改写 $n 处（${m.name}）")
+                        ret
+                    }
+                }
+                Log.i(TAG, "installed: QuaentCrearsaisSusts apply 类方法 [混淆渲染层] (${ms.size}, 延迟 ${tries * 500}ms)")
+            }.onFailure {
+                Log.w(TAG, "install 混淆类 apply failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+        }.start()
+    }
+
+    /**
+     * View 层改写：遍历 View 树，把两行原文换成目标文案。
+     * 标题行「当前音频输入输出设备」→「原道 OriG in」
+     * 内容行「原道OriG in」→「左耳 x% 右耳 x%」
+     */
+    private fun rewriteNoticeView(root: Any?): Int {
+        val bat = readBatteryPair()
+        if (bat.isEmpty() || root !is android.view.View) return 0
+        var changed = 0
+        fun walk(v: android.view.View) {
+            if (v is android.widget.TextView) {
+                val cur = v.text?.toString() ?: ""
+                when (cur) {
+                    "当前音频输入输出设备" -> { v.text = OUR_TITLE; changed++ }
+                    "原道OriG in" -> { v.text = bat; changed++ }
+                }
+            } else if (v is android.view.ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+        }
+        walk(root)
+        return changed
     }
 
     /** "L90,R85" → "左耳 90% 右耳 85%"（任一耳有效即返回，缺的耳省略） */

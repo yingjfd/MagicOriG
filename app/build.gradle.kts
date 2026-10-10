@@ -1,4 +1,4 @@
-import java.util.zip.ZipFile
+﻿import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.agp.app)
@@ -8,8 +8,8 @@ plugins {
     id("kotlin-parcelize")
 }
 
-// 发布签名密钥库。*.jks 在 .gitignore 里，克隆仓库后该文件默认不存在；
-// 构建脚本据此回退到 debug 签名，保证 assembleRelease 仍能产出可安装的 APK。
+// 鍙戝竷绛惧悕瀵嗛挜搴撱€?.jks 鍦?.gitignore 閲岋紝鍏嬮殕浠撳簱鍚庤鏂囦欢榛樿涓嶅瓨鍦紱
+// 鏋勫缓鑴氭湰鎹鍥為€€鍒?debug 绛惧悕锛屼繚璇?assembleRelease 浠嶈兘浜у嚭鍙畨瑁呯殑 APK銆?
 val releaseKeystore = file("signing/magicorig.jks")
 
 android {
@@ -20,8 +20,8 @@ android {
         applicationId = "com.redwind.magicorig"
         minSdk = 34   // Android 14 (MagicOS 8 / HarmonyOS NEXT)
         targetSdk = 35
-        versionCode = 100002
-        versionName = "1.0.1"
+        versionCode = 100003
+        versionName = "1.0.2"
     }
 
     signingConfigs {
@@ -48,11 +48,11 @@ android {
             isShrinkResources = true
             isDebuggable = false
             multiDexEnabled = true
-            // 密钥库缺失时回退到 debug 签名，避免 assembleRelease 直接失败
+            // 瀵嗛挜搴撶己澶辨椂鍥為€€鍒?debug 绛惧悕锛岄伩鍏?assembleRelease 鐩存帴澶辫触
             signingConfig = if (releaseKeystore.exists()) {
                 signingConfigs.getByName("release")
             } else {
-                println("MagicOriG: 未找到 $releaseKeystore，assembleRelease 将使用 debug 签名")
+                println("MagicOriG: 鏈壘鍒?$releaseKeystore锛宎ssembleRelease 灏嗕娇鐢?debug 绛惧悕")
                 signingConfigs.getByName("debug")
             }
             proguardFiles(
@@ -88,9 +88,9 @@ android {
         enabled = false
     }
 
-    // LSPosed 现代模块声明（META-INF/xposed/{module.prop,java_init.list,scope.list}）
-    // 必须作为「Java resources」打进 APK 根目录，LSPosed 靠扫描 APK zip 条目识别模块。
-    // AGP 的默认 sourceSet 已包含 src/main/resources，此处不要删除该目录。
+    // LSPosed 鐜颁唬妯″潡澹版槑锛圡ETA-INF/xposed/{module.prop,java_init.list,scope.list}锛?
+    // 蹇呴』浣滀负銆孞ava resources銆嶆墦杩?APK 鏍圭洰褰曪紝LSPosed 闈犳壂鎻?APK zip 鏉＄洰璇嗗埆妯″潡銆?
+    // AGP 鐨勯粯璁?sourceSet 宸插寘鍚?src/main/resources锛屾澶勪笉瑕佸垹闄よ鐩綍銆?
 
     packaging {
         resources {
@@ -103,23 +103,23 @@ android {
             excludes += "**.properties"
             excludes += "**.bin"
             excludes += "kotlin-tooling-metadata.json"
-            // 上面的 excludes 会作用于所有 Java resources，务必别把 LSPosed 声明也干掉：
-            // 校验任务 verifyXposedModule 会在打包后兜底检查 META-INF/xposed/**
+            // 涓婇潰鐨?excludes 浼氫綔鐢ㄤ簬鎵€鏈?Java resources锛屽姟蹇呭埆鎶?LSPosed 澹版槑涔熷共鎺夛細
+            // 鏍￠獙浠诲姟 verifyXposedModule 浼氬湪鎵撳寘鍚庡厹搴曟鏌?META-INF/xposed/**
         }
     }
 }
 
 /**
- * 打包后校验 LSPosed 现代模块声明。
+ * 鎵撳寘鍚庢牎楠?LSPosed 鐜颁唬妯″潡澹版槑銆?
  *
- * 背景：LSPosed 判断「这是不是模块」只看 APK zip 里有没有
- * META-INF/xposed/java_init.list（见 ModuleUtil.getModernModuleApk）。
- * 该文件一旦被 AGP 的 packaging 规则或 sourceSet 配置吞掉，模块就会
- * 从 LSPosed 列表里彻底消失，而且构建仍然「成功」——所以这里强制校验。
+ * 鑳屾櫙锛歀SPosed 鍒ゆ柇銆岃繖鏄笉鏄ā鍧椼€嶅彧鐪?APK zip 閲屾湁娌℃湁
+ * META-INF/xposed/java_init.list锛堣 ModuleUtil.getModernModuleApk锛夈€?
+ * 璇ユ枃浠朵竴鏃﹁ AGP 鐨?packaging 瑙勫垯鎴?sourceSet 閰嶇疆鍚炴帀锛屾ā鍧楀氨浼?
+ * 浠?LSPosed 鍒楄〃閲屽交搴曟秷澶憋紝鑰屼笖鏋勫缓浠嶇劧銆屾垚鍔熴€嶁€斺€旀墍浠ヨ繖閲屽己鍒舵牎楠屻€?
  */
 val verifyXposedModule = tasks.register("verifyXposedModule") {
     group = "verification"
-    description = "校验 APK 内 META-INF/xposed 模块声明是否完整，防止 LSPosed 识别不到模块"
+    description = "鏍￠獙 APK 鍐?META-INF/xposed 妯″潡澹版槑鏄惁瀹屾暣锛岄槻姝?LSPosed 璇嗗埆涓嶅埌妯″潡"
 
     val apkDirectory = layout.buildDirectory.dir("outputs/apk")
 
@@ -130,34 +130,34 @@ val verifyXposedModule = tasks.register("verifyXposedModule") {
         } else emptyList()
 
         if (apks.isEmpty()) {
-            logger.warn("verifyXposedModule: $dir 下没有 APK，跳过校验")
+            logger.warn("verifyXposedModule: $dir 涓嬫病鏈?APK锛岃烦杩囨牎楠?)
             return@doLast
         }
 
         var failed = false
         for (apk in apks) {
-            logger.lifecycle("verifyXposedModule: 检查 ${apk.name}")
+            logger.lifecycle("verifyXposedModule: 妫€鏌?${apk.name}")
             try {
                 ZipFile(apk).use { zip ->
                     val javaInit = zip.getEntry("META-INF/xposed/java_init.list")
                     if (javaInit == null) {
                         failed = true
-                        logger.error("  [FAIL] 缺少 META-INF/xposed/java_init.list —— LSPosed 不会把它识别为模块")
+                        logger.error("  [FAIL] 缂哄皯 META-INF/xposed/java_init.list 鈥斺€?LSPosed 涓嶄細鎶婂畠璇嗗埆涓烘ā鍧?)
                     } else {
                         val entries = zip.getInputStream(javaInit).bufferedReader()
                             .readLines().map { it.trim() }.filter { it.isNotEmpty() }
                         if (entries.isEmpty()) {
                             failed = true
-                            logger.error("  [FAIL] META-INF/xposed/java_init.list 为空")
+                            logger.error("  [FAIL] META-INF/xposed/java_init.list 涓虹┖")
                         } else {
-                            entries.forEach { logger.lifecycle("  [OK] 入口类: $it") }
+                            entries.forEach { logger.lifecycle("  [OK] 鍏ュ彛绫? $it") }
                         }
                     }
 
                     val prop = zip.getEntry("META-INF/xposed/module.prop")
                     if (prop == null) {
                         failed = true
-                        logger.error("  [FAIL] 缺少 META-INF/xposed/module.prop")
+                        logger.error("  [FAIL] 缂哄皯 META-INF/xposed/module.prop")
                     } else {
                         val map = zip.getInputStream(prop).bufferedReader().readLines()
                             .map { it.trim() }
@@ -169,49 +169,49 @@ val verifyXposedModule = tasks.register("verifyXposedModule") {
                         logger.lifecycle("  [OK] module.prop: $map")
                         if (!map.containsKey("minApiVersion")) {
                             failed = true
-                            logger.error("  [FAIL] module.prop 缺少 minApiVersion")
+                            logger.error("  [FAIL] module.prop 缂哄皯 minApiVersion")
                         }
                         if (!map.containsKey("targetApiVersion")) {
                             // LSPosed: targetVersion = extractIntPart(prop.getProperty("targetApiVersion"))
-                            logger.warn("  [WARN] module.prop 缺少 targetApiVersion（建议显式声明）")
+                            logger.warn("  [WARN] module.prop 缂哄皯 targetApiVersion锛堝缓璁樉寮忓０鏄庯級")
                         }
                         if (!map.containsKey("staticScope")) {
-                            logger.warn("  [WARN] module.prop 缺少 staticScope（默认 false = 作用域可被用户改）")
+                            logger.warn("  [WARN] module.prop 缂哄皯 staticScope锛堥粯璁?false = 浣滅敤鍩熷彲琚敤鎴锋敼锛?)
                         }
                     }
 
                     val scope = zip.getEntry("META-INF/xposed/scope.list")
                     if (scope == null) {
                         failed = true
-                        logger.error("  [FAIL] 缺少 META-INF/xposed/scope.list —— 现代模块作用域将为空")
+                        logger.error("  [FAIL] 缂哄皯 META-INF/xposed/scope.list 鈥斺€?鐜颁唬妯″潡浣滅敤鍩熷皢涓虹┖")
                     } else {
                         val scopes = zip.getInputStream(scope).bufferedReader().readLines()
                             .map { it.trim() }.filter { it.isNotEmpty() }
                         if (scopes.isEmpty()) {
                             failed = true
-                            logger.error("  [FAIL] META-INF/xposed/scope.list 为空")
+                            logger.error("  [FAIL] META-INF/xposed/scope.list 涓虹┖")
                         } else {
-                            scopes.forEach { logger.lifecycle("  [OK] 作用域: $it") }
+                            scopes.forEach { logger.lifecycle("  [OK] 浣滅敤鍩? $it") }
                         }
                     }
                 }
             } catch (error: Throwable) {
                 failed = true
-                logger.error("  [FAIL] 读取 ${apk.name} 失败: ${error.message}")
+                logger.error("  [FAIL] 璇诲彇 ${apk.name} 澶辫触: ${error.message}")
             }
         }
 
         if (failed) {
             throw GradleException(
-                "verifyXposedModule 失败：APK 内的 LSPosed 模块声明不完整，" +
-                    "构建出的 APK 在 LSPosed 模块列表里不会出现。"
+                "verifyXposedModule 澶辫触锛欰PK 鍐呯殑 LSPosed 妯″潡澹版槑涓嶅畬鏁达紝" +
+                    "鏋勫缓鍑虹殑 APK 鍦?LSPosed 妯″潡鍒楄〃閲屼笉浼氬嚭鐜般€?
             )
         }
-        logger.lifecycle("verifyXposedModule: 全部通过")
+        logger.lifecycle("verifyXposedModule: 鍏ㄩ儴閫氳繃")
     }
 }
 
-// 每次打包完成后自动校验
+// 姣忔鎵撳寘瀹屾垚鍚庤嚜鍔ㄦ牎楠?
 tasks.matching { it.name.startsWith("assemble") }.configureEach {
     finalizedBy(verifyXposedModule)
 }
@@ -251,9 +251,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.2")
     implementation("androidx.compose.material3:material3:1.3.0")
 
-    // Miuix UI —— 实测不可用：miuix 0.9.x 的 kotlin metadata = 2.4.0，需 Kotlin 2.4.10；
-    // 但升 Kotlin 2.4.10 后 Gradle 8.9 又报 kotlin.concurrent.atomics.AtomicsKt 缺失
-    // （需 Gradle 9 + AGP 9，连带升级有破坏现有可用模块的风险）。详见 docs/magicos11-integration.md
+    // Miuix UI 鈥斺€?瀹炴祴涓嶅彲鐢細miuix 0.9.x 鐨?kotlin metadata = 2.4.0锛岄渶 Kotlin 2.4.10锛?
+    // 浣嗗崌 Kotlin 2.4.10 鍚?Gradle 8.9 鍙堟姤 kotlin.concurrent.atomics.AtomicsKt 缂哄け
+    // 锛堥渶 Gradle 9 + AGP 9锛岃繛甯﹀崌绾ф湁鐮村潖鐜版湁鍙敤妯″潡鐨勯闄╋級銆傝瑙?docs/magicos11-integration.md
     // implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.3")
     // implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.3")
     // implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.3")

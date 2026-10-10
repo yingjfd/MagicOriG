@@ -91,6 +91,16 @@ object ControlCenterNoiseHook : HookContext() {
                     else -> -1
                 }
                 Log.w(TAG, "★ setNoiseCtrlMode(deviceId=$deviceId, nc=$nc) → status=$status")
+                // 诊断"进设备中心自动切降噪"：抓调用栈（10s 限频）
+                val nowS = System.currentTimeMillis()
+                if (nowS - lastClickStackAt > 10000) {
+                    lastClickStackAt = nowS
+                    val st = Thread.currentThread().stackTrace
+                    val frames = st.drop(3).take(10)
+                        .filterNot { it.className.startsWith("com.redwind.magicorig") || it.className.contains("xposed") || it.className.contains("lsposed") || it.className.contains("LSPosed") }
+                        .joinToString("\n    ") { "${it.className.substringAfterLast('.')}.$it" }
+                    Log.w(TAG, "  △ setNoiseCtrlMode 调用栈:\n    $frames")
+                }
                 var handled = false
                 if (status in 0..9) {
                     runCatching {
