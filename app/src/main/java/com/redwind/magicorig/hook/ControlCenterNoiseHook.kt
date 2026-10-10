@@ -586,6 +586,31 @@ object ControlCenterNoiseHook : HookContext() {
         }.onFailure {
             Log.w(TAG, "createDeviceCard 观察失败: ${it.javaClass.simpleName}: ${it.message}")
         }
+
+        // ── 13) 任务2 最后保险：DeviceServiceInfo.setBatteryLevel 兜底 ──
+        //    电量段若执行且 ballView.getBatteryLevel 断根匹配失败会写入 -1/0，
+        //    把 gen 阶段打桩的真实电量覆盖掉 → hasBatteryInfo()=false → 不显示。
+        //    这里对 <=0 的写入统一替换为跨进程真实电量（本机正常值 >0 不干预）。
+        runCatching {
+            val infoCls = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceInfo")
+            val m = infoCls.getDeclaredMethods().first {
+                it.name == "setBatteryLevel" && it.parameterCount == 1
+            }.apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val v = chain.args.getOrNull(0) as? Int ?: -1
+                val bat = batteryLevelForCard()
+                if (v <= 0 && bat != null && bat > 0) {
+                    Log.w(TAG, "★★ setBatteryLevel($v) → $bat 兜底")
+                    val newArgs = chain.args.toTypedArray()
+                    newArgs[0] = bat
+                    return@intercept chain.proceed(newArgs)
+                }
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: DeviceServiceInfo.setBatteryLevel [电量兜底]")
+        }.onFailure {
+            Log.w(TAG, "setBatteryLevel 兜底失败: ${it.javaClass.simpleName}: ${it.message}")
+        }
     }
 
     private const val OUR_MAC = "18:5C:A1:52:10:36"
