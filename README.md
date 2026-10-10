@@ -170,6 +170,10 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.6**（2026-10-10）：内部验证工具 —— 一键回归脚本（部署、开设备中心、点球、抓日志、
+  截图一条龙），之后每轮改动都能快速跑完全量检查。无功能变化。
+  Internal verification script (one-shot regression: deploy → device center → ball → logs).
+  No functional changes.
 * **v1.0.5**（2026-10-10）：电量显示补上最后一道保险 —— 确认了荣耀的显示条件是
   `batteryLevel > 0`，并给卡片写电量的入口加了兜底（任何环节写入 0 或 -1 都会被
   真实电量替换），三层防护确保耳机电量稳定显示。
