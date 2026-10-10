@@ -170,6 +170,10 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.3**（2026-10-10）：设备中心卡片电量改为在数据生成时直接写入（上游打桩，不再依赖
+  荣耀的多层显示条件）；补充卡片诊断观察；文档固化第二阶段全部修复记录。
+  Device-center card battery now written directly at data-generation time; diagnostics
+  added; full fix history documented.
 * **v1.0.2**（2026-10-10）：**电量通知真正上屏**。通知文案改到系统渲染层（SystemUI）执行 ——
   此前在音频 app 进程内的改写会被荣耀自有渲染逻辑覆盖（日志成功但通知栏永远显示原文）；
   现在通知栏实拍显示「原道 OriG in　左耳 100% 右耳 100%」。同时修复构建脚本的中文编码问题。

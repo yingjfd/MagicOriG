@@ -528,6 +528,19 @@ object ControlCenterNoiseHook : HookContext() {
                         } ?: "?"
                         val devId = chain.args.getOrNull(0)
                         Log.w(TAG, "▶ genDeviceServiceInfo(dev=$devId) sections=${secs?.size} [$types]")
+                        // ★ 任务2：上游打桩 —— 不依赖 createDeviceServiceCard 的电量段分支
+                        //   （该段受 isOnline/info查询等多重条件控制，实测从未走到 007d）。
+                        //   gen 是在线卡数据的必经点，直接把跨进程电量写进 info。
+                        if (devId == OUR_MAC && ret != null) {
+                            val bat = batteryLevelForCard()
+                            if (bat != null) {
+                                runCatching {
+                                    ret.javaClass.getMethod("setBatteryLevel", Int::class.javaPrimitiveType)
+                                        .apply { isAccessible = true }.invoke(ret, bat)
+                                    Log.w(TAG, "★★ genDeviceServiceInfo.setBatteryLevel($bat) ($OUR_NAME)")
+                                }.onFailure { Log.w(TAG, "setBatteryLevel 失败: ${it.javaClass.simpleName}") }
+                            }
+                        }
                     }.onFailure { Log.w(TAG, "gen 读取失败: ${it.javaClass.simpleName}") }
                     ret
                 }
@@ -537,6 +550,27 @@ object ControlCenterNoiseHook : HookContext() {
             }
         }.onFailure {
             Log.w(TAG, "install DeviceBallManager 注入失败: ${it.javaClass.simpleName}: ${it.message}")
+        }
+
+        // ── 12) 任务2诊断：createDeviceServiceCard 的电量段（007d getBatteryLevel）
+        //    实测零触发 —— 打出 ballView 的真实 deviceId（断根/电量 hook 都按
+        //    OUR_MAC 匹配，若 id 不匹配则两个 hook 全部空转）与 isOnline 实况。
+        runCatching {
+            val mgr = findClass("com.hihonor.controlviewnew.deviceservicecard.DeviceServiceCardDataMgr")
+            val m = mgr.declaredMethods.first {
+                it.name == "createDeviceServiceCard" && it.parameterCount == 5
+            }.apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val ball = chain.args.getOrNull(1)
+                val id = runCatching { ball?.javaClass?.getMethod("getDeviceId")?.invoke(ball) }.getOrNull()
+                val online = runCatching { ball?.javaClass?.getMethod("isOnline")?.invoke(ball) }.getOrNull()
+                val bid = runCatching { ball?.javaClass?.getMethod("getId")?.invoke(ball) }.getOrNull()
+                Log.w(TAG, "▶ createDeviceCard ball.id=$id getId=$bid isOnline=$online (匹配OUR=${id == OUR_MAC})")
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: createDeviceServiceCard [电量段诊断]")
+        }.onFailure {
+            Log.w(TAG, "createDeviceCard 观察失败: ${it.javaClass.simpleName}: ${it.message}")
         }
     }
 

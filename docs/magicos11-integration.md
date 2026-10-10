@@ -1570,6 +1570,65 @@ java.lang.ClassNotFoundException: ...EarphoneNoiseData$NoiseMode
 - 类声明：`Class descriptor: 'Lcom/pkg/Class;'`（**斜杠 descriptor**）
 - 两者的搜索 pattern 不可混用（曾因此误判"方法体不存在"）。
 
+---
+
+## 第二阶段 bug 修复记录（2026-10-10，v1.0.1 → v1.0.2）
+
+### 1. 设备中心点击无效 + 点一次卡死（✅ 实测修复）
+
+- **无效根因**：下发桥的 `status` 曾是 **String** → `putExtra("status","1")` 存字符串 →
+  bluetooth 端 `getIntExtra("status",0)` 类型不符返回 0 → `setAncMode(0)` 不在映射表 → 不发帧。
+  修：status 改**非空 Int**（注意 Kotlin `Int?` 会错选 Serializable 重载，必须非空）。
+- **卡死根因**：荣耀 `PropertyUtils.setNoiseCtrlMode` 的 MBB 通道对第三方设备**永不回调**
+  （onResult/onError 都不来）→ `onNoiseModeClick` 的 `isSetting` 永真 → 一次点击后全部按钮被早退。
+  修：广播后**模拟 `cb.onResult("")`**（回调实现 $1.onResult 只 post V 复位，参数不参与逻辑），
+  并 `return@intercept null` 跳过原 MBB 调用。
+- **实测**：三档连点 → `4E 05 00 00 01 02 {00,01,10} 00` 三帧全部真实写出。
+
+### 2. 进页面自动下发降噪（bug3，代码修复）
+
+- **Settings 侧根因**：skip 窗口 5.5s 关，档位恢复 `Q(byte)` 在 6.0s 调 → Q 同步回调
+  `onMultiStateClicked` → 广播不被拦 → 进页面自动切降噪。
+  修：**Q 调用包进新的 skip 窗口**（6.0s 开、+800ms 关）。
+- 设备中心侧：栈诊断已布（`setNoiseCtrlMode 调用栈`，10s 限频），待复现定位。
+
+### 3. 电量通知迁移（✅ v1.0.2 实拍终证）
+
+- 蓝牙进程 `showBtNotification` 停用（注释 + cancel 清残留）。
+- **改写战场转移史**（三层全试）：
+  1. sws 进程 `Notification.Builder.setContentTitle/Text` —— 通知走 custom RemoteViews，打不到；
+  2. sws 进程 `RemoteViews.setTextViewText` —— **`chain.args` 是只读 List**
+     （`Collections$UnmodifiableList.set` 抛异常，日志在赋值前打所以"看似成功"）。
+     正确姿势：`chain.args.toTypedArray()` → `chain.proceed(newArgs)`（libxposed 官方重载，
+     编译器验证存在）；
+  3. 荣耀自有渲染类 `android.media.QuaentCrearsaisSusts`（R8 混淆 + **动态 classloader**，
+     onHook/轮询 30s 均 ClassNotFoundException）—— 它覆盖一切上游改写。
+- **终极方案**：改到 **SystemUI 进程的 `RemoteViews.apply/reapply`**（View 树 = 渲染前
+  最后一刻，SystemUI 作用域已配）→ `★★★ SystemUI 通知改写` 日志 → **通知栏实拍
+  「原道 OriG in / 左耳 100% 右耳 100%」**。
+
+### 4. 断连球消失（✅ 正反实测）
+
+- `Settings.Global[magicorig_connected]`：bluetooth 进程写，信号挂
+  **`HeadsetStateDispatcher` A2DP 状态回调**（CONNECTED→1 / DISCONNECTED→0）——
+  最初挂在 SPP 电量回调上，回连后长时间不触发 → 门控误杀。
+- 球列表三出口 + 数量修正按 flag 门控：`connected=0` 球消失 / `=1` 球恢复（截图双向实证）。
+
+### 5. 卡片电量（进行中 → 上游打桩）
+
+- `createDeviceServiceCard` 电量段（0055 isOnline 门 → 007d `getBatteryLevel`）实测**零触发**，
+  子类无覆写（虚调用必达），最后嫌疑是 `ballView.getDeviceId() ≠ OUR_MAC`（断根匹配空转）。
+- **方案升级为上游打桩**：`genDeviceServiceInfo` 返回前直接 `info.setBatteryLevel(跨进程电量)`，
+  不再依赖电量段分支；`getBatteryLevel` 断根与诊断观察（`createDeviceCard ball.id/匹配OUR`）双保险并存。
+
+### 6. 工程教训
+
+- **`Set-Content -Encoding UTF8`（PS5.1）会破坏 UTF-8 源文件**（加 BOM/乱码）—— 曾把
+  build.gradle.kts 写坏并推送；改 Kotlin/Gradle 文件一律用编辑工具，禁用 PS 写文件。
+- `chain.args` 只读，改参唯一姿势 `proceed(args.toTypedArray())`。
+- Release 文案要**人话**（不堆 API 术语）；**每次 push 后 bump 版本 + 发 Release**。
+
+
 
 
 
