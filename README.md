@@ -170,6 +170,11 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.2**（2026-10-10）：**电量通知真正上屏**。通知文案改到系统渲染层（SystemUI）执行 ——
+  此前在音频 app 进程内的改写会被荣耀自有渲染逻辑覆盖（日志成功但通知栏永远显示原文）；
+  现在通知栏实拍显示「原道 OriG in　左耳 100% 右耳 100%」。同时修复构建脚本的中文编码问题。
+  Battery notice now actually renders (rewrite moved to the SystemUI render layer);
+  verified on the notification bar.
 * **v1.0.1**（2026-10-09）：**bug 修复集** —— ①设备中心点击切换无效（广播 status 曾为 String，
   bluetooth 端 `getIntExtra` 读到 0 不发帧）与点一次后全部按钮卡死（荣耀 MBB 对第三方设备不回调
   → `isSetting` 永真，改为模拟 `onResult` 回调）；②进入蓝牙/设备中心页面自动下发降噪
