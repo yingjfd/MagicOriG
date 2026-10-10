@@ -170,6 +170,12 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.4**（2026-10-10）：**设备中心现在显示耳机的真实降噪档位**。反汇编证实设备中心
+  不存在"自动下发"路径（所有下发只来自按钮点击）—— 之前卡片固定显示"降噪"选中是默认值，
+  会被误认为打开界面就把耳机切了。现在蓝牙进程在每次成功切换后记录真实档位，
+  卡片按真实状态显示（真实记录 → 用户默认档位 → 降噪 三级回退）。
+  Card now shows the earbud's real ANC mode (recorded by the bluetooth process);
+  no auto-dispatch path exists in the device center (verified by decompilation).
 * **v1.0.3**（2026-10-10）：设备中心卡片电量改为在数据生成时直接写入（上游打桩，不再依赖
   荣耀的多层显示条件）；补充卡片诊断观察；文档固化第二阶段全部修复记录。
   Device-center card battery now written directly at data-generation time; diagnostics

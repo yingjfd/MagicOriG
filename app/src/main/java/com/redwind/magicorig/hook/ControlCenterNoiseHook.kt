@@ -54,12 +54,26 @@ object ControlCenterNoiseHook : HookContext() {
                 }
                 dataCls.getDeclaredMethod("setSupportedModes", List::class.java)
                     .apply { isAccessible = true }.invoke(data, modes)
-                // 从 Settings.Global 恢复上次档位（5/4/3→降噪细分，1→关，2→透传）
-                val last = readLastAnc()
-                val cur = when (last) {
+                // ★ 当前档位三级优先（让 UI 显示耳机真实状态，而不是固定默认值 ——
+                //   否则用户会误以为"一打开就被自动切到降噪"）：
+                //   1) magicorig_current_anc —— bluetooth 进程下发成功后记录的真实模式
+                //   2) magicorig_last_anc     —— 用户在 App 里设的默认档位
+                //   3) 兜底 NOISE_CANCELLATION
+                val app0 = runCatching {
+                    Class.forName("android.app.ActivityThread")
+                        .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                }.getOrNull()
+                fun g(key: String): String? = runCatching {
+                    app0?.let { android.provider.Settings.Global.getString(it.contentResolver, key) }
+                }.getOrNull()
+                fun map(status: String?): String = when (status) {
                     "1" -> "OFF"
                     "2" -> "AWARENESS"
-                    else -> "NOISE_CANCELLATION"
+                    "3", "4", "5" -> "NOISE_CANCELLATION"
+                    else -> ""
+                }
+                val cur = map(g("magicorig_current_anc")).ifEmpty {
+                    map(g("magicorig_last_anc")).ifEmpty { "NOISE_CANCELLATION" }
                 }
                 val curMode = consts.firstOrNull { it.toString() == cur }
                 if (curMode != null) {

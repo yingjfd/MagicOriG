@@ -652,5 +652,16 @@ object RfcommController {
             else -> return
         }
         currentAnc = mode; sendPacketSafe(packet); changeUIAncStatus(currentAnc)
+        // 跨进程记录耳机**真实** ANC 模式 —— 设备中心卡片按它显示当前档位。
+        // 否则 controlcenter 侧只能注入固定 NOISE_CANCELLATION，用户会误以为
+        // "一打开界面就被自动切到降噪"（其实耳机没动，只是 UI 显示了默认值）。
+        mContext?.let { ctx ->
+            runCatching {
+                android.provider.Settings.Global.putString(
+                    ctx.contentResolver, "magicorig_current_anc", mode.toString()
+                )
+                Log.i(TAG, "真实 ANC 模式已跨进程记录: $mode")
+            }.onFailure { Log.w(TAG, "current_anc 写入失败: ${it.javaClass.simpleName}") }
+        }
     }
 }
