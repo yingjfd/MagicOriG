@@ -1627,6 +1627,25 @@ java.lang.ClassNotFoundException: ...EarphoneNoiseData$NoiseMode
   build.gradle.kts 写坏并推送；改 Kotlin/Gradle 文件一律用编辑工具，禁用 PS 写文件。
 - `chain.args` 只读，改参唯一姿势 `proceed(args.toTypedArray())`。
 - Release 文案要**人话**（不堆 API 术语）；**每次 push 后 bump 版本 + 发 Release**。
+- **Windows Store 版 Python 的 urllib TLS 必断**（`SSL: UNEXPECTED_EOF` 12 连败），
+  但 `curl.exe` 到同一 api.github.com 是 200 —— GitHub API 发布一律走 curl。
+
+### 7. 第二阶段补遗（Round 15–17 结论）
+
+- **设备中心不存在自动下发路径**（方法体级状态机扫描实证）：
+  `setNoiseCtrlMode` 唯一调用方 = `onNoiseModeClick`；
+  `onNoiseModeClick` 唯一调用方 = `addEarphoneNoiseSection` 的 4 个按钮 lambda。
+  早期看到的"密集交替调用"是当时的人工连点测试。所谓"一打开就被切到降噪"
+  = 卡片固定显示注入的 `currentMode=NOISE_CANCELLATION` 默认值造成的**显示误导**。
+- **显示真实档位**：bluetooth `setAncMode` 成功 → 写 `Settings.Global[magicorig_current_anc]`；
+  `fromBatteryData` 的 currentMode 三级回退：**真实记录 → 用户默认档位(last_anc) → 降噪兜底**。
+- **电量显示条件**：`DeviceServiceInfo.hasBatteryInfo() = batteryLevel > 0`（`if-lez`）。
+  三重保险：① `genDeviceServiceInfo` 上游打桩；② `ballView.getBatteryLevel` 断根；
+  ③ `setBatteryLevel(≤0)` → `proceed(newArgs)` 兜底替换真实电量。
+- **一键回归**：`tools/full_verify.ps1`（部署 → 信号读取 → 开设备中心 → 点球 → 日志/截图）。
+- **dexdump 方法体搜索要诀**：方法体头是 `|[offset] 要用点号类名.方法名:`；
+  invoke 行是 `Lcom/.../Class;.method:`（**带分号**）—— 两种格式不通用（多次空搜的根因）。
+
 
 
 

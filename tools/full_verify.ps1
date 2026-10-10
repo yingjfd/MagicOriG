@@ -24,7 +24,9 @@ function Shot([string]$out) {
     return 0
 }
 function LogQ([string]$pat) {
-    (& $script:adb shell "su -c 'grep -a -e $pat /data/adb/lspd/log/modules_*.log | tail -10'" 2>$null) -split $nl |
+    # pattern 含空格会被 su -c 内的 shell 拆词 → 转成正则通配（无空格）规避
+    $p = $pat -replace ' ', '.{0,2}'
+    (& $script:adb shell "su -c 'grep -a -e $p /data/adb/lspd/log/modules_*.log | tail -10'" 2>$null) -split $nl |
         ForEach-Object { $s = $_.Trim(); if ($s) { ($s -replace '^\[ [\d-T:.]+ \S+ \S+ \S+ /LSPosedFramework.\] ', '') } }
 }
 
@@ -67,6 +69,16 @@ Write-Host '════ 5. 点耳机球（默认 640,1400，可改）═══�
 Start-Sleep 9
 $n = Shot "$root\verify_2_card.png"
 Write-Host "card shot: ${n}B  ← 看卡片电量(任务2) + 噪声控制三按钮 + 当前档位是否真实(bugA)"
+
+Write-Host '════ 5b. 下拉控制中心面板（用户核心入口：面板里的设备中心卡片条球区）════'
+& $adb shell 'input keyevent BACK' 2>$null | Out-Null
+Start-Sleep 2
+& $adb shell 'input swipe 1150 0 1150 1800 300' 2>$null | Out-Null
+Start-Sleep 4
+$n = Shot "$root\verify_3_panel.png"
+Write-Host "panel shot: ${n}B  ← 看「设备中心」卡片条球区是否出现耳机球"
+& $adb shell 'input keyevent BACK' 2>$null | Out-Null
+Start-Sleep 2
 
 Write-Host '════ 6. 关键日志 ════'
 Write-Host '--- 打桩/电量 ---'

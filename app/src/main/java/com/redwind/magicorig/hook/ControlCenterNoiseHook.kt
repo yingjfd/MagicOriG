@@ -597,10 +597,16 @@ object ControlCenterNoiseHook : HookContext() {
                 it.name == "setBatteryLevel" && it.parameterCount == 1
             }.apply { isAccessible = true }
             module.hook(m).intercept { chain ->
+                // ★ 只干预我们设备的 info —— 否则荣耀自家耳机低电(0)时会被
+                //   替换成我们的电量（串台显示）
+                val did = runCatching {
+                    chain.thisObject?.javaClass?.getMethod("getDeviceId")?.invoke(chain.thisObject)
+                }.getOrNull()
+                if (did != OUR_MAC) return@intercept chain.proceed()
                 val v = chain.args.getOrNull(0) as? Int ?: -1
                 val bat = batteryLevelForCard()
                 if (v <= 0 && bat != null && bat > 0) {
-                    Log.w(TAG, "★★ setBatteryLevel($v) → $bat 兜底")
+                    Log.w(TAG, "★★ setBatteryLevel($v) → $bat 兜底 ($OUR_NAME)")
                     val newArgs = chain.args.toTypedArray()
                     newArgs[0] = bat
                     return@intercept chain.proceed(newArgs)
