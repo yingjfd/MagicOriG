@@ -1,5 +1,6 @@
 package com.redwind.magicorig.hook
 
+import android.content.Intent
 import android.content.SharedPreferences
 import io.github.libxposed.service.XposedService
 import com.redwind.magicorig.config.ConfigManager
@@ -12,6 +13,14 @@ object SettingsHeadsetHook : HookContext() {
     private const val TAG = "MagicOriG-Settings"
 
     override fun onHook() {
+        // ★ bug修复（蓝牙界面显示耳机本体真实模式）：注册状态广播接收器 ——
+        //   进页面时发的只读查询（ACTION_REFRESH_STATUS）回包后，bluetooth 进程会
+        //   广播 ACTION_PODS_ANC_CHANGED(status)；这里实时把它映射为面板选中项。
+        //   全程只读查询+UI 高亮，不产生"调模式"数据包。
+        //   onHook 时刻 currentApplication 可能尚未就绪（曾静默跳过）→ 带重试。
+        runCatching { registerAncReceiver(retryLeft = 4) }
+            .onFailure { Log.w(TAG, "注册 ANC 状态接收器异常: ${it.javaClass.simpleName}: ${it.message}") }
+
         // HeadsetIDConstants 是 MIUI/HyperOS 专有类。真机 dexdump 确认 MagicOS 11 的
         // com.android.settings 里根本没有它（实际只有 TypecEarPhoneController /
         // SmartEarphoneImp / DeviceEarphoneCfgObserver），所以原实现永远走
@@ -176,24 +185,43 @@ object SettingsHeadsetHook : HookContext() {
                 // 设跳过期避免主动触发期间隐式 ANC 下发（进页面时耳机不应自动切模式）
                 skipAncDispatch.set(true)
                 handler.postDelayed({ skipAncDispatch.set(false) }, 5500L)
+                // ★ bug修复：进入蓝牙界面时向 bluetooth 发**只读查询**（QUERY_ANC 查询帧，
+                //   不是调模式包）→ 耳机回真实模式 → ACTION_PODS_ANC_CHANGED 广播 →
+                //   下方 receiver 更新面板选中（显示耳机本体当前模式）。
+                runCatching {
+                    val app = Class.forName("android.app.ActivityThread")
+                        .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                    app?.sendBroadcast(Intent("com.redwind.magicorig.ACTION_REFRESH_STATUS"))
+                    Log.i(TAG, "→→ 进页面已发只读查询 ACTION_REFRESH_STATUS")
+                }.onFailure { Log.w(TAG, "查询广播失败: ${it.javaClass.simpleName}") }
                 // ── 恢复上次使用的档位（只改 UI 选中态，不下发给耳机）──
                 // ★ bug3 修复：Q 会同步回调 listener.onMultiStateClicked → 广播下发。
                 //   原实现 skip 窗口 5.5s 关、Q 在 6.0s 调 —— 0.5s 间隙里广播不被拦
                 //   → 进页面自动切到默认降噪。这里把 Q 包进新的 skip 窗口。
+                // ★ 数据源升级：优先 magicorig_current_anc（耳机本体真实模式，由查询回包
+                //   更新），无记录再回退 magicorig_last_anc（用户默认档位）。
                 handler.postDelayed({
                     skipAncDispatch.set(true)
                     runCatching {
                         val app = Class.forName("android.app.ActivityThread")
                             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
                             ?: return@runCatching
-                        val last = android.provider.Settings.Global.getString(
-                            app.contentResolver, "magicorig_last_anc"
-                        ) ?: return@runCatching
-                        // status → AncMode 字节：仅三档（实验性/深度/普通降噪）
+                        val cur = android.provider.Settings.Global.getString(
+                            app.contentResolver, "magicorig_current_anc"
+                        )
+                        val last = cur
+                            ?: android.provider.Settings.Global.getString(
+                                app.contentResolver, "magicorig_last_anc"
+                            ) ?: return@runCatching
+                        Log.i(TAG, "恢复档位数据源: ${if (cur != null) "真实(current_anc)" else "记忆(last_anc)"} = $last")
+                        // status → AncMode 协议字节（真实模式可能是任意档）
+                        // OFF=0x00 TRANSPARENT=0x01 NORMAL=0x02 DEEP=0x03 EXPERIMENT=0x10
                         val modeByte: Byte = when (last) {
-                            "5" -> 0x10   // 实验性降噪 ANC_EXPERIMENT
-                            "4" -> 0x03   // 深度降噪 ANC_DEEP
-                            "3" -> 0x02   // 普通降噪 ANC_NORMAL
+                            "5" -> 0x10   // 实验性降噪
+                            "4" -> 0x03   // 深度降噪
+                            "3" -> 0x02   // 普通降噪
+                            "2" -> 0x01   // 通透（耳机本体真实模式）
+                            "1" -> 0x00   // 关闭（耳机本体真实模式）
                             else -> return@runCatching
                         }
                         val pref = noiseListener
@@ -492,16 +520,21 @@ object SettingsHeadsetHook : HookContext() {
                                 // 接收端已存在：RfcommController.kt:403
                                 //   ACTION_ANC_SELECT -> setANCMode(getIntExtra("status",0))
                                 //   1=ANC_OFF 2=ANC_TRANSPARENT 3=ANC_NORMAL 4=ANC_DEEP 5=ANC_EXPERIMENT
-                                // 映射：index 0/1/2 → 实验性降噪 / 深度降噪 / 普通降噪
+                                // ★ 档位→模式映射（bug修复）：蓝牙界面三钮实际是
+                                //   「降噪 / 通透 / 关闭」，此前误写成 实验性/深度/普通（1→4、2→3），
+                                //   点"通透"实发深度降噪、点"关闭"实发普通降噪。正确为：
                                 val status = when (index) {
-                                    0 -> 5   // 实验性降噪 ANC_EXPERIMENT (0x10)
-                                    1 -> 4   // 深度降噪 ANC_DEEP (0x03)
-                                    2 -> 3   // 普通降噪 ANC_NORMAL (0x02)
+                                    0 -> 5   // 降噪钮 → 实验性降噪 ANC_EXPERIMENT (0x10)
+                                    1 -> 2   // 通透钮 → ANC_TRANSPARENT
+                                    2 -> 1   // 关闭钮 → ANC_OFF
                                     else -> null
                                 }
                                 if (status != null) {
                                     // 记录用户选择的 ANC 档位到 Settings.Global（跨进程持久化）
-                                    runCatching {
+                                    // ★ 仅降噪类档位(≥3)参与"默认降噪档位"记忆 ——
+                                    //   若把 1(关)/2(通透)写进 last_anc，设备中心点「降噪」
+                                    //   会回放成关闭/通透（档位记忆被污染）。
+                                    if (status >= 3) runCatching {
                                         val app = Class.forName("android.app.ActivityThread")
                                             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
                                         app?.let {
@@ -546,6 +579,63 @@ object SettingsHeadsetHook : HookContext() {
     private val noiseEnableGuard = ThreadLocal.withInitial { false }
     private var capturedListener: Any? = null
     private var noiseListener: Any? = null
+    @Volatile private var ancReceiverRegistered = false
+
+    /**
+     * 注册 ACTION_PODS_ANC_CHANGED 接收器（真实档位实时显示）。
+     * onHook 时刻 currentApplication 可能未就绪 → app 为 null 时延迟 1s 重试（最多 retryLeft 次）。
+     */
+    private fun registerAncReceiver(retryLeft: Int) {
+        if (ancReceiverRegistered) return
+        val app = runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+        }.getOrNull()
+        if (app == null) {
+            if (retryLeft > 0) {
+                Log.w(TAG, "app 未就绪，1s 后重试注册 ANC receiver（剩 $retryLeft 次）")
+                android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed({ runCatching { registerAncReceiver(retryLeft - 1) } }, 1000L)
+            } else {
+                Log.w(TAG, "app 仍未就绪，放弃注册 ANC receiver（6s 恢复兜底仍可用）")
+            }
+            return
+        }
+        val rc = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
+                val status = intent?.getIntExtra("status", -1) ?: -1
+                val b: Byte = when (status) {
+                    5 -> 0x10; 4 -> 0x03; 3 -> 0x02
+                    2 -> 0x01; 1 -> 0x00; 6 -> 0x11
+                    else -> return
+                }
+                Log.w(TAG, "★ 收到耳机真实 ANC 状态=$status → 面板选中更新")
+                skipAncDispatch.set(true)   // 防 Q 触发隐式下发
+                runCatching {
+                    val pref = noiseListener ?: return@runCatching
+                    pref.javaClass.getDeclaredMethod("Q", Byte::class.javaPrimitiveType)
+                        .apply { isAccessible = true }.invoke(pref, b)
+                }.onFailure { Log.w(TAG, "面板更新失败: ${it.javaClass.simpleName}") }
+                // Q 同步回调 onMultiStateClicked（已 skip 拦截），800ms 后关窗
+                android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed({ skipAncDispatch.set(false) }, 800L)
+                // 持久化（下次进页面 6s 恢复兜底也用真实值）
+                runCatching {
+                    ctx?.contentResolver?.let {
+                        android.provider.Settings.Global.putString(it, "magicorig_current_anc", status.toString())
+                    }
+                }
+            }
+        }
+        val flags = if (android.os.Build.VERSION.SDK_INT >= 33) 0x2 else 0  // RECEIVER_EXPORTED=0x2
+        app.registerReceiver(
+            rc,
+            android.content.IntentFilter("com.redwind.magicorig.ACTION_PODS_ANC_CHANGED"),
+            flags
+        )
+        ancReceiverRegistered = true
+        Log.i(TAG, "registered: ACTION_PODS_ANC_CHANGED → 真实档位实时显示")
+    }
     private var noiseView: Any? = null
     private var skipAncDispatch = ThreadLocal.withInitial { false }
 }

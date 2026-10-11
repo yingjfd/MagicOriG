@@ -62,6 +62,7 @@ object RfcommController {
     private var lastTempBatt = 0
     private var currentBatteryParams: BatteryParams? = null
     private var currentAnc: Int = 1
+    private var lastRecordedAnc: Int = -1   // current_anc 去重（心跳响应防高频写）
     private var currentGameMode: Boolean = false
     private var currentLowLatency: Boolean = false
     private var currentDualConn: Boolean = false
@@ -523,6 +524,29 @@ object RfcommController {
             putExtra("status", status)
         }
         sendExternalPodsStatusBroadcast(MagicOriGAction.ACTION_PODS_ANC_CHANGED) { putExtra("status", status) }
+        // ★ 真实档位统一记录点（bug修复）：本函数是所有 currentAnc 更新的汇合点 ——
+        //   ① 连接时 QUERY_ANC 查询帧的响应（AncModeParser 解析）
+        //   ② 耳机本体触控切换（耳机主动上报）
+        //   ③ 手机端 setANCMode 下发
+        //   三条路径都会写 magicorig_current_anc，设备中心/蓝牙页据此**显示**当前模式，
+        //   查询/上报只是读取，不产生"调模式"数据包。
+        //   ★ 去重：心跳响应会被 AncModeParser 反复解析出同值（实测每 12ms 一次），
+        //     相同状态不再重复写 Settings/发日志（高频写入拖慢系统）。
+        if (status != lastRecordedAnc) {
+            lastRecordedAnc = status
+            val recCtx = mContext ?: runCatching {
+                Class.forName("android.app.ActivityThread")
+                    .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+            }.getOrNull()
+            recCtx?.let { ctx ->
+                runCatching {
+                    android.provider.Settings.Global.putString(
+                        ctx.contentResolver, "magicorig_current_anc", status.toString()
+                    )
+                    Log.i(TAG, "真实 ANC 模式记录(汇合点): $status")
+                }.onFailure { Log.w(TAG, "current_anc 写入失败: ${it.javaClass.simpleName}") }
+            } ?: Log.w(TAG, "current_anc 未记录：context 均为 null")
+        }
     }
 
     private fun changeUIBatteryStatus(status: BatteryParams) {
@@ -655,13 +679,19 @@ object RfcommController {
         // 跨进程记录耳机**真实** ANC 模式 —— 设备中心卡片按它显示当前档位。
         // 否则 controlcenter 侧只能注入固定 NOISE_CANCELLATION，用户会误以为
         // "一打开界面就被自动切到降噪"（其实耳机没动，只是 UI 显示了默认值）。
-        mContext?.let { ctx ->
+        // ★ mContext 可能尚未初始化（实测为 null → let 不进入、静默丢失），
+        //   兜底走 currentApplication，保证任何时点调用都能写入。
+        val recCtx = mContext ?: runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+        }.getOrNull()
+        recCtx?.let { ctx ->
             runCatching {
                 android.provider.Settings.Global.putString(
                     ctx.contentResolver, "magicorig_current_anc", mode.toString()
                 )
                 Log.i(TAG, "真实 ANC 模式已跨进程记录: $mode")
             }.onFailure { Log.w(TAG, "current_anc 写入失败: ${it.javaClass.simpleName}") }
-        }
+        } ?: Log.w(TAG, "current_anc 未记录：context 不可用（mContext/app 均为 null）")
     }
 }

@@ -170,6 +170,14 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.0.8**（2026-10-11）：**修复两个用户实测的 bug** ——
+  ①蓝牙界面三档位的模式映射写错：点「透传」实发深度降噪、点「关闭」实发普通降噪
+  （此前误当成了实验性/深度/普通三档），现在正确对应 降噪=实验性、透传、关闭；
+  ②进入设备中心/蓝牙界面时改为**查询耳机当前模式并显示**（只读查询帧，不再下发调模式包），
+  卡片和蓝牙页显示的就是耳机本体的真实档位；同时修复真实档位记录拿不到上下文时的
+  静默丢失、心跳重复写入、档位记忆被通透/关闭污染等问题。
+  Fixed the ANC gear→mode mapping (pass-through/close used to send the wrong modes) and
+  both UIs now show the earbud's actual mode via a read-only query (no mode-set packets).
 * **v1.0.6**（2026-10-10）：内部验证工具 —— 一键回归脚本（部署、开设备中心、点球、抓日志、
   截图一条龙），之后每轮改动都能快速跑完全量检查。无功能变化。
   Internal verification script (one-shot regression: deploy → device center → ball → logs).

@@ -25,6 +25,7 @@ import android.content.Intent
 object ControlCenterNoiseHook : HookContext() {
     private const val TAG = "MagicOriG-CtrlCenter"
     @Volatile private var lastClickStackAt = 0L
+    @Volatile private var lastAncQueryAt = 0L
     private const val MODE_CLS = "com.hihonor.controlviewnew.deviceservicecard.EarphoneNoiseData\$NoiseMode"
     private const val DATA_CLS = "com.hihonor.controlviewnew.deviceservicecard.EarphoneNoiseData"
 
@@ -580,6 +581,21 @@ object ControlCenterNoiseHook : HookContext() {
                 val online = runCatching { ball?.javaClass?.getMethod("isOnline")?.invoke(ball) }.getOrNull()
                 val bid = runCatching { ball?.javaClass?.getMethod("getId")?.invoke(ball) }.getOrNull()
                 Log.w(TAG, "▶ createDeviceCard ball.id=$id getId=$bid isOnline=$online (匹配OUR=${id == OUR_MAC})")
+                // ★ bug修复：进入设备中心（开卡）时向 bluetooth 发**只读查询**（ACTION_REFRESH_STATUS
+                //   → queryStatus() → QUERY_ANC 查询帧，不是调模式包）→ 耳机回当前模式 →
+                //   changeUIAncStatus 写 magicorig_current_anc → 卡片显示**耳机本体真实模式**。
+                if (id == OUR_MAC) {
+                    val nowQ = System.currentTimeMillis()
+                    if (nowQ - lastAncQueryAt > 5000) {
+                        lastAncQueryAt = nowQ
+                        runCatching {
+                            val app = Class.forName("android.app.ActivityThread")
+                                .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                            app?.sendBroadcast(Intent("com.redwind.magicorig.ACTION_REFRESH_STATUS"))
+                            Log.w(TAG, "→→ 已发只读查询 ACTION_REFRESH_STATUS（不发调模式包）")
+                        }.onFailure { Log.w(TAG, "查询广播失败: ${it.javaClass.simpleName}") }
+                    }
+                }
                 chain.proceed()
             }
             Log.i(TAG, "installed: createDeviceServiceCard [电量段诊断]")
