@@ -230,27 +230,12 @@ object SettingsHeadsetHook : HookContext() {
                             }
                             Log.w(TAG, "★ 面板条目绑定协议值: [${names.joinToString(", ")}]（顺序=降噪/透传/关闭）")
                         }.onFailure { Log.w(TAG, "读取面板条目失败: ${it.javaClass.simpleName}: ${it.message}") }
-                        // status → 面板绑定字节（实测面板：降噪=0x01 透传=0x02 关闭=0x00）
-                        val modeByte: Byte = when (last) {
-                            "5", "4", "3" -> 0x01   // 降噪类 → 降噪钮
-                            "2" -> 0x02              // 通透 → 透传钮
-                            "1" -> 0x00              // 关闭 → 关闭钮
-                            "6" -> 0x01              // 抗风噪归降噪钮
-                            else -> return@runCatching
-                        }
-                        val pref = noiseListener
-                        if (pref == null) {
-                            Log.w(TAG, "恢复上次档位失败：未捕获 MultiState 偏好")
-                            return@runCatching
-                        }
-                        pref.javaClass.getDeclaredMethod("Q", Byte::class.javaPrimitiveType)
-                            .apply { isAccessible = true }
-                            .invoke(pref, modeByte)
-                        Log.i(TAG, "已恢复上次档位 UI: status=$last → modeByte=0x${"%02X".format(modeByte)}")
+                        // status → 面板高亮统一走 applyPanelHighlight（未就绪自动重试 ——
+                        // 曾因进页面时面板未 ready 而静默失败，用户看到默认态）
+                        val status = last.toIntOrNull() ?: return@runCatching
+                        applyPanelHighlight(status)
+                        Log.i(TAG, "已恢复上次档位 UI: status=$last（走统一高亮）")
                     }.onFailure { Log.w(TAG, "恢复上次档位失败: ${it.javaClass.simpleName}: ${it.message}") }
-                    // Q 同步触发 onMultiStateClicked（回调随 invoke 同步发生）；
-                    // ★ 兜底窗口 800ms→3000ms：覆盖 Q 的异步二次回调，防止漏出被真下发
-                    handler.postDelayed({ skipAncDispatch.set(false) }, 3000L)
                 }, 6000L)
                 result
             }
@@ -680,7 +665,41 @@ object SettingsHeadsetHook : HookContext() {
     private var capturedListener: Any? = null
     private var noiseListener: Any? = null
     @Volatile private var ancReceiverRegistered = false
-    @Volatile private var lastReceiverStatus = -1   // 同值去重（防反复 Q）
+    @Volatile private var lastReceiverStatus = -1   // 上次状态（仅用于区分新值/同值日志）
+
+    /**
+     * 把耳机真实档位应用到面板高亮（Q 高亮刷新，非下发）。
+     * 面板未就绪（noiseListener 未捕获）时自动重试 —— 曾因进页面时面板未 ready
+     * 而静默失败，用户看到的一直是默认态。
+     */
+    private fun applyPanelHighlight(status: Int, retry: Int = 3) {
+        // status → 面板绑定字节（运行时实测：降噪=0x01 透传=0x02 关闭=0x00）
+        val b: Byte = when (status) {
+            3, 4, 5, 6 -> 0x01   // 降噪类（含抗风噪）→ 降噪钮
+            2 -> 0x02            // 通透 → 透传钮
+            1 -> 0x00            // 关闭 → 关闭钮
+            else -> return
+        }
+        val pref = noiseListener
+        if (pref == null) {
+            if (retry > 0) {
+                Log.w(TAG, "面板未就绪，2s 后重试高亮 status=$status（剩 $retry 次）")
+                android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed({ runCatching { applyPanelHighlight(status, retry - 1) } }, 2000L)
+            } else {
+                Log.w(TAG, "面板仍未就绪，放弃高亮（status=$status）")
+            }
+            return
+        }
+        skipAncDispatch.set(true)   // 防 Q 触发隐式下发（真防线：广播前有 skip 判断）
+        runCatching {
+            pref.javaClass.getDeclaredMethod("Q", Byte::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(pref, b)
+            Log.w(TAG, "★ 面板高亮已应用（status=$status → 0x${"%02X".format(b)}）")
+        }.onFailure { Log.w(TAG, "面板更新失败: ${it.javaClass.simpleName}: ${it.message}") }
+        android.os.Handler(android.os.Looper.getMainLooper())
+            .postDelayed({ skipAncDispatch.set(false) }, 3000L)
+    }
     @Volatile private var lastAncBcStackAt = 0L     // ANC广播调用栈限频
     @Volatile private var lastQStackAt = 0L         // Q调用栈限频
     private val inQExec = ThreadLocal.withInitial { false }   // Q 执行中标志（同步链拦截）
@@ -708,30 +727,14 @@ object SettingsHeadsetHook : HookContext() {
         val rc = object : android.content.BroadcastReceiver() {
             override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
                 val status = intent?.getIntExtra("status", -1) ?: -1
-                // ★ 同值去重：心跳/重复广播会连续送来相同状态，每次都调 Q 会反复触发
-                //   onMultiStateClicked（有漏出 skip 窗口被下发的风险）—— 状态没变就不动 UI。
-                if (status == lastReceiverStatus) return
+                // ★ 同值也刷新面板（bug修复：进页面回包与上次相同时曾被去重跳过，
+                //   面板重建后丢失高亮 → 用户看到默认态而不是耳机真实模式）。
+                //   反复 Q 的下发风险已由 Q 链守卫 + 广播前 skip 判断双重兜底。
+                val isNew = status != lastReceiverStatus
                 lastReceiverStatus = status
-                // ★ status → 面板绑定字节（运行时实测：降噪=0x01 透传=0x02 关闭=0x00，
-                //   与 SPP 协议字节 0x10/0x01/0x00 不同 —— 曾按协议字节猜导致 Q 不高亮）
-                val b: Byte = when (status) {
-                    3, 4, 5, 6 -> 0x01   // 降噪类（含抗风噪）→ 降噪钮
-                    2 -> 0x02            // 通透 → 透传钮
-                    1 -> 0x00            // 关闭 → 关闭钮
-                    else -> return
-                }
-                Log.w(TAG, "★ 收到耳机真实 ANC 状态=$status → 面板选中更新")
-                skipAncDispatch.set(true)   // 防 Q 触发隐式下发
-                runCatching {
-                    val pref = noiseListener ?: return@runCatching
-                    pref.javaClass.getDeclaredMethod("Q", Byte::class.javaPrimitiveType)
-                        .apply { isAccessible = true }.invoke(pref, b)
-                }.onFailure { Log.w(TAG, "面板更新失败: ${it.javaClass.simpleName}") }
-                // Q 同步回调 onMultiStateClicked（已 skip 拦截）；
-                // ★ 窗口 800ms→3000ms：Q 的选中刷新可能伴随异步的二次回调，
-                //   短窗口会让 Q 引发的 onMultiStateClicked 漏出 skip 被真下发（"过一会自动切降噪"）。
-                android.os.Handler(android.os.Looper.getMainLooper())
-                    .postDelayed({ skipAncDispatch.set(false) }, 3000L)
+                Log.w(TAG, "★ 收到耳机真实 ANC 状态=$status（${if (isNew) "新值" else "同值仍刷新"}）→ 面板选中更新")
+                // 高亮应用（未就绪自动重试）
+                applyPanelHighlight(status)
                 // 持久化（下次进页面 6s 恢复兜底也用真实值）
                 runCatching {
                     ctx?.contentResolver?.let {

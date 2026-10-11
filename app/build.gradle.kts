@@ -20,8 +20,8 @@ android {
         applicationId = "com.redwind.magicorig"
         minSdk = 34   // Android 14 (MagicOS 8 / HarmonyOS NEXT)
         targetSdk = 35
-        versionCode = 100014
-        versionName = "1.1.3"
+        versionCode = 100015
+        versionName = "1.1.4"
     }
 
     signingConfigs {
