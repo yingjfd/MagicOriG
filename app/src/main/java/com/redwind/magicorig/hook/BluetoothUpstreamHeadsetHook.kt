@@ -412,14 +412,16 @@ object BluetoothUpstreamHeadsetHook : HookContext() {
     private fun oriGAncFromMiuiMode(mode: Int) = when (mode) { 1 -> 3; 2 -> 2; else -> 1 }
 
     private fun sendOriGAnc(miuiMode: Int) {
-        currentAnc = oriGAncFromMiuiMode(miuiMode)
-        val ctx = context ?: return
+        val newAnc = oriGAncFromMiuiMode(miuiMode)
+        // ★ 根治"过一会自动切降噪"：本函数由荣耀耳机服务的 changeAncMode 触发 ——
+        //   荣耀在**页面加载/状态同步**时也会调它（本意是"应用当前状态"而非用户切换），
+        //   此前把每次调用都转发成真下发 → 进蓝牙页后耳机被自动切到降噪
+        //   （miuiMode=1 → 普通降噪）。现在只同步内部状态，不再转发 ACTION_ANC_SELECT：
+        //   蓝牙页/设备中心/App 各有自己的下发路径，本路径的转发只剩副作用。
+        currentAnc = newAnc
+        Log.w(TAG, "⛔ changeAncMode 转发已抑制（miuiMode=$miuiMode → $newAnc 仅同步状态，不下发）")
         runCatching {
-            ctx.sendBroadcast(Intent(MagicOriGAction.ACTION_ANC_SELECT).apply {
-                putExtra("status", currentAnc)
-                setPackage("com.android.bluetooth")
-                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-            })
+            val ctx = context ?: return@runCatching
             ctx.sendBroadcast(Intent(MagicOriGAction.ACTION_PODS_ANC_CHANGED).apply {
                 putExtra("status", currentAnc)
                 setPackage(ctx.packageName)

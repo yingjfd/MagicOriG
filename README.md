@@ -170,6 +170,15 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.3**（2026-10-11）：**彻底根治「蓝牙页停留一会耳机自动切到降噪」**（多轮反馈的顽疾）。
+  用调用栈日志连挖三轮后找到全部源头：①模块早期把荣耀耳机服务的
+  "状态同步"调用误转发成了真切换命令；②面板的高亮刷新会连带触发一次真下发；
+  ③负责拦截的"保护窗口"开关此前**只 set 从未 get**（等于拦截器从未通电）。
+  现在：状态同步不再转发、高亮刷新不下发、保护窗口真正生效
+  （实测进页面静置 100 秒零下发）。
+  Fixed the buds auto-switching to ANC while idle: status-sync calls were being
+  forwarded as real switches, and the protective skip window had never actually
+  been checked. All paths guarded (100s idle verified zero dispatch).
 * **v1.1.2**（2026-10-11）：**设备中心卡片显示双耳独立电量** ——
   反汇编找到电量 section 的数据源（DeviceInfo.batteryData），把真实的左右耳电量
   喂进去后卡片出现「L 90% / R 80%」双电量条；因球列表常被系统缓存，

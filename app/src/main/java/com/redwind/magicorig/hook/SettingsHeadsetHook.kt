@@ -414,6 +414,55 @@ object SettingsHeadsetHook : HookContext() {
                     noiseListener = listener
                     noiseView = v
                     Log.w(TAG, "★ 捕获 MultiState listener=${System.identityHashCode(listener)} view=${System.identityHashCode(v)}")
+                    // ★ 确定性 hook impl 的 onMultiStateClicked（不依赖 R(a) 的不确定触发 ——
+                    //   曾出现新进程 R(a) 未触发 → 下发拦截 hook 未装 → 自动切换绕过）。
+                    if (noiseDispatchHooked == false) runCatching {
+                        val ms = listener.javaClass.declaredMethods.filter { it.name == "onMultiStateClicked" }
+                        for (m in ms) {
+                            m.isAccessible = true
+                            module.hook(m).intercept { c3 ->
+                                val ix = c3.args.getOrNull(0)
+                                Log.w(TAG, "★★ 下发回调实现类(捕获即hook) ${listener.javaClass.name} index=$ix")
+                                // Q 链内（高亮刷新）：只高亮不下发
+                                if (inQExec.get() == true) {
+                                    Log.w(TAG, "  ⛔ Q 链内回调，跳过下发（index=$ix）")
+                                    return@intercept null
+                                }
+                                // 与 R(a) 路径同一套完整逻辑（映射→记忆→广播），保证用户点击可用
+                                val status = when (ix) {
+                                    0 -> 5; 1 -> 2; 2 -> 1; else -> null
+                                }
+                                if (status != null) {
+                                    // ★ skip 拦截（真防线）：激活面板/档位恢复/状态同步的回调链
+                                    //   绝不能真下发 —— 此前只 set 不 get，skip 从未生效。
+                                    if (skipAncDispatch.get() == true) {
+                                        Log.w(TAG, "  ⛔ skip 窗口内，跳过 ANC 广播（index=$ix, 捕获路径）")
+                                        return@intercept null
+                                    }
+                                    if (status >= 3) runCatching {
+                                        val app = Class.forName("android.app.ActivityThread")
+                                            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                                        app?.let {
+                                            android.provider.Settings.Global.putString(
+                                                it.contentResolver, "magicorig_last_anc", status.toString()
+                                            )
+                                        }
+                                    }
+                                    runCatching {
+                                        val app = Class.forName("android.app.ActivityThread")
+                                            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                                        app?.sendBroadcast(Intent(
+                                            "com.redwind.magicorig.ACTION_ANC_SELECT"
+                                        ).putExtra("status", status))
+                                        Log.w(TAG, "→→ 已广播 ANC status=$status (index=$ix, 捕获路径)")
+                                    }.onFailure { Log.w(TAG, "广播失败: ${it.javaClass.simpleName}") }
+                                }
+                                c3.proceed()
+                            }
+                        }
+                        noiseDispatchHooked = true
+                        Log.i(TAG, "installed: onMultiStateClicked 实现类（捕获时机, ${ms.size} 个）")
+                    }.onFailure { Log.w(TAG, "捕获处 hook impl 失败: ${it.javaClass.simpleName}") }
                 }
                 chain.proceed()
             }
@@ -436,6 +485,11 @@ object SettingsHeadsetHook : HookContext() {
                     } else {
                         runCatching {
                             Log.w(TAG, "★ 主动调用 MultiState.onClick(view)")
+                            // ★ 本触发是"激活面板"（早期面板不显示的 workaround），
+                            //   其回调链绝不能真下发 —— 包进 skip 窗口。
+                            skipAncDispatch.set(true)
+                            android.os.Handler(android.os.Looper.getMainLooper())
+                                .postDelayed({ skipAncDispatch.set(false) }, 5000L)
                             L.javaClass.getDeclaredMethod("onClick", Class.forName("android.view.View"))
                                 .apply { isAccessible = true }
                                 .invoke(L, V)
@@ -469,7 +523,13 @@ object SettingsHeadsetHook : HookContext() {
             val q = cls.getDeclaredMethod("Q", Byte::class.javaPrimitiveType).apply { isAccessible = true }
             module.hook(q).intercept { chain ->
                 Log.w(TAG, "★ 档位设置 Q(mode=${chain.args.getOrNull(0)})")
-                chain.proceed()
+                // ★ 根治"过一会自动切降噪"：Q 是"高亮刷新"语义（我们的恢复/receiver、
+                //   荣耀面板的延迟同步 Runnable a.N.a.run:107 都会调它）——
+                //   Q 会同步触发 listener.onMultiStateClicked → 广播真下发。
+                //   实测荣耀的 a.N.a.run 在页面加载后延迟调 Q(降噪) → 自动切降噪。
+                //   修复：Q 执行期间（同步链）的 listener 回调只做高亮、不广播下发。
+                inQExec.set(true)
+                try { chain.proceed() } finally { inQExec.set(false) }
             }
             Log.i(TAG, "installed: MultiStateSwitchingPanel.Q(byte) [档位]")
         }.onFailure {
@@ -530,6 +590,15 @@ object SettingsHeadsetHook : HookContext() {
                                 val index = c2.args.getOrNull(0)
                                 val mode = c2.args.getOrNull(1)
                                 Log.w(TAG, "★★ 下发回调实现类 ${impl.javaClass.name} index=$index mode=$mode")
+                                // ★ 根治"过一会自动切降噪"：本回调若处于 Q（高亮刷新）的同步链中
+                                //   —— 调用者包括我们的档位恢复、状态同步 receiver，以及荣耀面板
+                                //   自己的延迟同步 Runnable（实测 a.N.a.run:107 会在页面加载后
+                                //   调 Q(降噪) → 经此回调 → 广播真下发）——则只做高亮不下发。
+                                //   用户真实点击不会在 Q 链内，不受影响。
+                                if (inQExec.get() == true) {
+                                    Log.w(TAG, "  ⛔ Q 链内回调，跳过下发（index=$index）")
+                                    return@intercept null
+                                }
                                 // ── 协议桥：Settings 进程 → bluetooth 进程 RfcommController ──
                                 // 接收端已存在：RfcommController.kt:403
                                 //   ACTION_ANC_SELECT -> setANCMode(getIntExtra("status",0))
@@ -548,6 +617,12 @@ object SettingsHeadsetHook : HookContext() {
                                     // ★ 仅降噪类档位(≥3)参与"默认降噪档位"记忆 ——
                                     //   若把 1(关)/2(通透)写进 last_anc，设备中心点「降噪」
                                     //   会回放成关闭/通透（档位记忆被污染）。
+                                    // ★ skip 拦截（真防线）：激活面板/档位恢复/状态同步的回调链
+                                    //   绝不能真下发 —— 此前只 set 不 get，skip 从未生效。
+                                    if (skipAncDispatch.get() == true) {
+                                        Log.w(TAG, "  ⛔ skip 窗口内，跳过 ANC 广播（index=$index, R路径）")
+                                        return@intercept null
+                                    }
                                     if (status >= 3) runCatching {
                                         val app = Class.forName("android.app.ActivityThread")
                                             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
@@ -607,6 +682,8 @@ object SettingsHeadsetHook : HookContext() {
     @Volatile private var ancReceiverRegistered = false
     @Volatile private var lastReceiverStatus = -1   // 同值去重（防反复 Q）
     @Volatile private var lastAncBcStackAt = 0L     // ANC广播调用栈限频
+    @Volatile private var lastQStackAt = 0L         // Q调用栈限频
+    private val inQExec = ThreadLocal.withInitial { false }   // Q 执行中标志（同步链拦截）
 
     /**
      * 注册 ACTION_PODS_ANC_CHANGED 接收器（真实档位实时显示）。
