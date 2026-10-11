@@ -102,6 +102,32 @@ object SystemUIHeadsetIconHook : HookContext() {
             Log.w(TAG, "install SystemUI apply hook failed: ${it.javaClass.simpleName}: ${it.message}")
         }
 
+        // 0b. ★ 最终防线：hook TextView.setText（渲染的绝对终点）——
+        //    实测 apply 层改写会改到 View 实例但通知栏仍显示原文（荣耀有独立的
+        //    通知渲染/复用路径，apply 返回的实例未必是最终上屏的那个）。
+        //    在 setText 处按精确文案改写，兜住一切渲染路径。
+        //    匹配串极低频（只有音频设备通知含这两行），性能开销可忽略。
+        runCatching {
+            val m = Class.forName("android.widget.TextView").declaredMethods.first {
+                it.name == "setText" && it.parameterCount == 1 &&
+                        it.parameterTypes[0] == CharSequence::class.java
+            }.apply { isAccessible = true }
+            module.hook(m).intercept { chain ->
+                val t = (chain.args.getOrNull(0) as? CharSequence)?.toString()
+                if (t == "当前音频输入输出设备" || t == "原道OriG in") {
+                    val out = if (t == "当前音频输入输出设备") "原道 OriG in" else readBatteryLine()
+                    Log.w(TAG, "★★★★ TextView.setText 改写: '$t' → '$out'")
+                    val newArgs = chain.args.toTypedArray()
+                    newArgs[0] = out
+                    return@intercept chain.proceed(newArgs)
+                }
+                chain.proceed()
+            }
+            Log.i(TAG, "installed: TextView.setText [通知文案最终防线]")
+        }.onFailure {
+            Log.w(TAG, "install setText hook failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+
         // 1. 找 SystemUI 启动时机
         // MagicOS 的 SystemUI 里没有 CentralSurfacesImpl / SystemUIApplication / SystemUI
         // （真机 dexdump 确认），原来固定 hook CentralSurfacesImpl.start 必然 findClass 抛异常。

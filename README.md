@@ -170,6 +170,13 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.1**（2026-10-11）：修复「音频切换的通知变回原样」——
+  ①系统界面（SystemUI）是个长寿进程，更新模块后它若没重启就一直跑旧代码，
+  通知改写自然失效；现在改写增加了最后一道防线（在文字最终上屏的那一步拦截），
+  即使荣耀的通知渲染走自己的路径也能兜住；②回归脚本补上 SystemUI 重启步骤。
+  实测通知栏恢复显示「原道 OriG in / 左耳 90% 右耳 80%」。
+  Fixed the audio notice reverting to stock text: added a last-line-of-defense
+  rewrite at the final text-rendering step + restart SystemUI after updates.
 * **v1.1.0**（2026-10-11）：修复「在蓝牙噪声控制页停留一会，耳机会自己切到降噪」——
   两个叠加原因：①状态解析遇到不认识的值会误当成"关闭"，导致显示的真实档位在
   关闭/降噪之间反复跳动；②每次档位刷新都会再触发一次面板选中逻辑，其隐式回调

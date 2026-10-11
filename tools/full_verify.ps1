@@ -1,4 +1,4 @@
-﻿# MagicOriG 全量验证脚本 —— 设备一回来跑这个
+# MagicOriG 全量验证脚本 —— 设备一回来跑这个
 # 用法: powershell -ExecutionPolicy Bypass -File tools\full_verify.ps1
 param([switch]$SkipInstall)
 $ErrorActionPreference = 'Continue'
@@ -50,6 +50,13 @@ Write-Host "last_anc:       $((& $adb shell 'settings get global magicorig_last_
 Write-Host '════ 3. 重启相关进程 ════'
 & $adb shell 'am force-stop com.hihonor.controlcenter' 2>$null | Out-Null
 & $adb shell 'am force-stop com.hihonor.imedia.sws' 2>$null | Out-Null
+# ★ SystemUI 也必须重启 —— 部署后老 SystemUI 进程一直跑旧代码，
+#   通知改写（setText 防线在 SystemUI）会失效（用户实测"通知变回原样"）。
+$sp = (& $adb shell 'pidof com.android.systemui' 2>$null | Out-String).Trim()
+if ($sp) {
+    (& $adb shell "su -c 'kill $sp'" 2>&1 | Out-String).Trim() | Out-Null
+    Write-Host "systemui killed ($sp) → 自动拉起新进程"
+}
 Write-Host 'controlcenter + sws 已重启'
 
 Write-Host '════ 4. 打开设备中心（关 USB 对话框 → 截图定位）════'
