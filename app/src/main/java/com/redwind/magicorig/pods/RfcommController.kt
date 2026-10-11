@@ -561,7 +561,15 @@ object RfcommController {
     }
 
     private fun sendExternalPodsStatusBroadcast(action: String, fill: Intent.() -> Unit = {}) {
-        val ctx = mContext ?: return
+        // ★ mContext 可能尚未初始化（实测静默 return → 外部广播从未发出 →
+        //   Settings 侧收不到真实档位）—— 兜底 currentApplication。
+        val ctx = mContext ?: runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+        }.getOrNull() ?: run {
+            Log.w(TAG, "sendExternalPodsStatusBroadcast 跳过：context 不可用 (action=$action)")
+            return
+        }
         val targets = listOf("com.android.bluetooth", "com.android.settings")
         targets.forEach { targetPackage ->
             try {

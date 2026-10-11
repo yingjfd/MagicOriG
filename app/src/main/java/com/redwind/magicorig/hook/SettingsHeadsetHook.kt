@@ -214,14 +214,28 @@ object SettingsHeadsetHook : HookContext() {
                                 app.contentResolver, "magicorig_last_anc"
                             ) ?: return@runCatching
                         Log.i(TAG, "恢复档位数据源: ${if (cur != null) "真实(current_anc)" else "记忆(last_anc)"} = $last")
-                        // status → AncMode 协议字节（真实模式可能是任意档）
-                        // OFF=0x00 TRANSPARENT=0x01 NORMAL=0x02 DEEP=0x03 EXPERIMENT=0x10
+                        // ★ 观察：面板三个条目的绑定协议值（Q(byte) 高亮条件 = 条目.b == 传入值）
+                        //   —— 之前按 AncMode 协议字节猜（0x10/0x03/0x02/0x01/0x00），实测
+                        //   Q(0x00) 不高亮"关闭"钮（全灰）→ 猜错，需要真实绑定值。
+                        runCatching {
+                            val pref0 = noiseListener ?: return@runCatching
+                            val listField = pref0.javaClass.getDeclaredField("a").apply { isAccessible = true }
+                            @Suppress("UNCHECKED_CAST")
+                            val items = listField.get(pref0) as? List<Any?> ?: return@runCatching
+                            val names = ArrayList<String>()
+                            for (it in items) {
+                                if (it == null) continue
+                                val bv = it.javaClass.getDeclaredField("b").apply { isAccessible = true }.getByte(it)
+                                names.add("0x" + "%02X".format(bv))
+                            }
+                            Log.w(TAG, "★ 面板条目绑定协议值: [${names.joinToString(", ")}]（顺序=降噪/透传/关闭）")
+                        }.onFailure { Log.w(TAG, "读取面板条目失败: ${it.javaClass.simpleName}: ${it.message}") }
+                        // status → 面板绑定字节（实测面板：降噪=0x01 透传=0x02 关闭=0x00）
                         val modeByte: Byte = when (last) {
-                            "5" -> 0x10   // 实验性降噪
-                            "4" -> 0x03   // 深度降噪
-                            "3" -> 0x02   // 普通降噪
-                            "2" -> 0x01   // 通透（耳机本体真实模式）
-                            "1" -> 0x00   // 关闭（耳机本体真实模式）
+                            "5", "4", "3" -> 0x01   // 降噪类 → 降噪钮
+                            "2" -> 0x02              // 通透 → 透传钮
+                            "1" -> 0x00              // 关闭 → 关闭钮
+                            "6" -> 0x01              // 抗风噪归降噪钮
                             else -> return@runCatching
                         }
                         val pref = noiseListener
@@ -604,9 +618,12 @@ object SettingsHeadsetHook : HookContext() {
         val rc = object : android.content.BroadcastReceiver() {
             override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
                 val status = intent?.getIntExtra("status", -1) ?: -1
+                // ★ status → 面板绑定字节（运行时实测：降噪=0x01 透传=0x02 关闭=0x00，
+                //   与 SPP 协议字节 0x10/0x01/0x00 不同 —— 曾按协议字节猜导致 Q 不高亮）
                 val b: Byte = when (status) {
-                    5 -> 0x10; 4 -> 0x03; 3 -> 0x02
-                    2 -> 0x01; 1 -> 0x00; 6 -> 0x11
+                    3, 4, 5, 6 -> 0x01   // 降噪类（含抗风噪）→ 降噪钮
+                    2 -> 0x02            // 通透 → 透传钮
+                    1 -> 0x00            // 关闭 → 关闭钮
                     else -> return
                 }
                 Log.w(TAG, "★ 收到耳机真实 ANC 状态=$status → 面板选中更新")
