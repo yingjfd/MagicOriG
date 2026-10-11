@@ -63,6 +63,7 @@ object RfcommController {
     private var currentBatteryParams: BatteryParams? = null
     private var currentAnc: Int = 1
     private var lastRecordedAnc: Int = -1   // current_anc 去重（心跳响应防高频写）
+    @Volatile private var lastAncStackAt = 0L   // setANCMode 调用栈限频
     private var currentGameMode: Boolean = false
     private var currentLowLatency: Boolean = false
     private var currentDualConn: Boolean = false
@@ -673,6 +674,16 @@ object RfcommController {
     }
     fun setANCMode(mode: Int) {
         Log.i(TAG, "★ setANCMode(mode=$mode) socketReady=${::mDevice.isInitialized}")
+        // 诊断"自动切降噪"：抓调用栈（10s 限频）
+        val nowS = System.currentTimeMillis()
+        if (nowS - lastAncStackAt > 10000) {
+            lastAncStackAt = nowS
+            val st = Thread.currentThread().stackTrace
+            val frames = st.drop(3).take(10)
+                .filterNot { it.className.startsWith("com.redwind.magicorig") }
+                .joinToString("\n    ") { "${it.className.substringAfterLast('.')}.$it" }
+            Log.w(TAG, "  △ setANCMode 调用栈:\n    $frames")
+        }
         if (mode == currentAnc) {
             // 原本直接 return → currentAnc 初值与目标相同时永远不发包（实测 mode=3 早退，无 SPP 写出）。
             // 改为记录但仍下发，确保 UI 点击总能真正到达耳机。

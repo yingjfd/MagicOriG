@@ -170,6 +170,12 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.2**（2026-10-11）：**设备中心卡片显示双耳独立电量** ——
+  反汇编找到电量 section 的数据源（DeviceInfo.batteryData），把真实的左右耳电量
+  喂进去后卡片出现「L 90% / R 80%」双电量条；因球列表常被系统缓存，
+  喂入点放在每次取设备信息的出口（电量永远新鲜）。
+  另为「蓝牙页自动切降噪」加了双侧调用栈诊断（复现时可直接看到触发者）。
+  Device-center card now shows per-ear battery bars (L/R); dispatch diagnostics added.
 * **v1.1.1**（2026-10-11）：修复「音频切换的通知变回原样」——
   ①系统界面（SystemUI）是个长寿进程，更新模块后它若没重启就一直跑旧代码，
   通知改写自然失效；现在改写增加了最后一道防线（在文字最终上屏的那一步拦截），

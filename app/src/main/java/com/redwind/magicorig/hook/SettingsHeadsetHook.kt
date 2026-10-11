@@ -557,6 +557,17 @@ object SettingsHeadsetHook : HookContext() {
                                             )
                                         }
                                     }.onFailure { /* 记录失败不影响广播 */ }
+                                    // 诊断"自动切降噪"：广播前抓调用栈（10s 限频）——
+                                    // 复现时直接看到是按钮点击、Q 恢复还是荣耀内部路径触发。
+                                    val nowB = System.currentTimeMillis()
+                                    if (nowB - lastAncBcStackAt > 10000) {
+                                        lastAncBcStackAt = nowB
+                                        val st = Thread.currentThread().stackTrace
+                                        val frames = st.drop(3).take(10)
+                                            .filterNot { it.className.startsWith("com.redwind.magicorig") }
+                                            .joinToString("\n    ") { "${it.className.substringAfterLast('.')}.$it" }
+                                        Log.w(TAG, "  △ ANC广播调用栈(index=$index status=$status):\n    $frames")
+                                    }
                                     runCatching {
                                         val app = Class.forName("android.app.ActivityThread")
                                             .getDeclaredMethod("currentApplication").invoke(null)
@@ -595,6 +606,7 @@ object SettingsHeadsetHook : HookContext() {
     private var noiseListener: Any? = null
     @Volatile private var ancReceiverRegistered = false
     @Volatile private var lastReceiverStatus = -1   // 同值去重（防反复 Q）
+    @Volatile private var lastAncBcStackAt = 0L     // ANC广播调用栈限频
 
     /**
      * 注册 ACTION_PODS_ANC_CHANGED 接收器（真实档位实时显示）。

@@ -236,6 +236,7 @@ object ControlCenterNoiseHook : HookContext() {
         runCatching {
             val mgrCls = findClass("com.hihonor.controlviewnew.manager.DeviceBallManager")
             val infoCls = findClass("com.hihonor.controlviewnew.info.DeviceInfo")
+            val bdCls = findClass("com.hihonor.controlviewnew.info.BatteryData")   // 双耳电量
             val typeCls = findClass("com.hihonor.controlcenter_aar.bean.HnDeviceProductType")
             val thirdEar = typeCls.enumConstants?.firstOrNull { it.toString() == "Third_EarPhone" }
                 ?: typeCls.enumConstants?.firstOrNull()
@@ -253,6 +254,8 @@ object ControlCenterNoiseHook : HookContext() {
                 runCatching { infoCls.getMethod("setBtMacAddress", String::class.java).invoke(info, OUR_MAC) }
                 runCatching { infoCls.getMethod("setName", String::class.java).invoke(info, OUR_NAME) }
                 runCatching { infoCls.getMethod("setIndex", Int::class.javaPrimitiveType).invoke(info, 1) }
+                // 双耳电量注入（列表构建路径）
+                feedDualBattery(info)
                 info
             }.getOrNull()
 
@@ -471,6 +474,26 @@ object ControlCenterNoiseHook : HookContext() {
                 Log.w(TAG, "c2.s.o hook 失败: ${it.javaClass.simpleName}: ${it.message}")
             }
 
+            // ── 9b) 任务：双耳电量 —— getDeviceInfoById 出口补喂 ──
+            //    球列表常被持久化缓存（buildOur 只在首建跑一次），而电量 section 的数据源
+            //    正是 DeviceBallManager.getDeviceInfoById(devId).getBatteryData() ——
+            //    在此出口对我们的设备补喂真实 L/R，每次取数都拿到新鲜电量。
+            runCatching {
+                val m = mgrCls.declaredMethods.first {
+                    it.name == "getDeviceInfoById" && it.parameterCount == 1
+                }.apply { isAccessible = true }
+                module.hook(m).intercept { chain ->
+                    val ret = chain.proceed()
+                    if (chain.args.getOrNull(0) == OUR_MAC && ret != null) {
+                        feedDualBattery(ret)
+                    }
+                    ret
+                }
+                Log.i(TAG, "installed: getDeviceInfoById [双耳电量出口补喂]")
+            }.onFailure {
+                Log.w(TAG, "getDeviceInfoById hook 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }
+
             // ── 10) ★ 在线态断根：createDeviceServiceCard 每次开卡都读 ballView.isOnline()
             //    决定走在线卡（gen 5-section 含噪声控制）还是离线卡（只有响铃/连接）。
             //    我们在球创建时设的 true 会被荣耀属性监听（onPropertyInfoChange）重置回 false
@@ -652,6 +675,41 @@ object ControlCenterNoiseHook : HookContext() {
     }.getOrDefault(false)
 
     /** 任务2：设备中心卡片电量 —— 读跨进程电量（L90,R85）取双耳平均，无数据返回 null */
+    /** 读跨进程电量原始对 "L90,R80" → (90,80)；无数据返回 null */
+    private fun readBatteryRaw(): Pair<Int, Int>? = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+            ?: return null
+        val raw = android.provider.Settings.Global.getString(app.contentResolver, "magicorig_battery")
+            ?: return null
+        if (!raw.contains(",")) return null
+        val l = raw.substringBefore(',').removePrefix("L").toIntOrNull()
+        val r = raw.substringAfter(',').removePrefix("R").toIntOrNull()
+        if (l == null || r == null) null else Pair(l, r)
+    }.getOrNull()
+
+    /**
+     * 任务：设备中心显示双耳电量 —— 给 DeviceInfo 喂 BatteryData（left/right/powerAbility）。
+     * batteryData 为 null 时电量 section 走默认（integrated=false、隐藏不显示）；
+     * 而球列表常被持久化缓存（buildOur 只在首建跑一次），故也在 getDeviceInfoById
+     * 出口对我们的设备补喂（电量 section 正是经它取数据）。
+     */
+    private fun feedDualBattery(info: Any) = runCatching {
+        val lr = readBatteryRaw() ?: return@runCatching
+        val bdCls = findClass("com.hihonor.controlviewnew.info.BatteryData")
+        // 构造器非 public —— setAccessible 后 newInstance
+        val bd = bdCls.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
+        bdCls.getMethod("setLeftPower", Int::class.javaPrimitiveType).invoke(bd, lr.first)
+        bdCls.getMethod("setRightPower", Int::class.javaPrimitiveType).invoke(bd, lr.second)
+        var ability = 0
+        for (cn in listOf("POWER_ABILITY_LEFT", "POWER_ABILITY_RIGHT")) {
+            ability = ability or bdCls.getDeclaredField(cn).apply { isAccessible = true }.getInt(null)
+        }
+        bdCls.getMethod("setPowerAbility", Int::class.javaPrimitiveType).invoke(bd, ability)
+        info.javaClass.getMethod("setBatteryData", bdCls).invoke(info, bd)
+        Log.w(TAG, "★★ 双耳电量喂入: 左${lr.first}% 右${lr.second}% (ability=0x${"%X".format(ability)})")
+    }.onFailure { Log.w(TAG, "双耳电量喂入失败: ${it.javaClass.simpleName}: ${it.message}") }
+
     private fun batteryLevelForCard(): Int? = runCatching {
         val app = Class.forName("android.app.ActivityThread")
             .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
