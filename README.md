@@ -170,6 +170,13 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.0**（2026-10-11）：修复「在蓝牙噪声控制页停留一会，耳机会自己切到降噪」——
+  两个叠加原因：①状态解析遇到不认识的值会误当成"关闭"，导致显示的真实档位在
+  关闭/降噪之间反复跳动；②每次档位刷新都会再触发一次面板选中逻辑，其隐式回调
+  有小概率绕过拦截被真下发。现在：未知值不再改状态、相同状态不重复刷新、
+  高亮刷新的拦截窗口加长。实测进页面静置近一分钟零下发。
+  Fixed the buds silently switching to ANC while idling on the bluetooth page
+  (bad-state misparse + highlight-refresh callback leaking past the guard).
 * **v1.0.9**（2026-10-11）：蓝牙页真实档位显示的最后一环打通 ——
   ①状态广播的发送在拿不到上下文时会静默跳过（查询结果送不到设置页）→ 加兜底；
   ②反汇编+运行时实测发现面板按钮的内部编号（降噪=1、透传=2、关闭=0）与耳机协议字节

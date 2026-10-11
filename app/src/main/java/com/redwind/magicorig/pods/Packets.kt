@@ -136,7 +136,9 @@ object AncModeParser {
             AncMode.DEEP -> NoiseControlMode.DEEP
             AncMode.EXPERIMENT -> NoiseControlMode.EXPERIMENT
             AncMode.WIND_SUPPRESSION -> NoiseControlMode.WIND_SUPPRESSION
-            else -> NoiseControlMode.OFF
+            // ★ 未知值返回 null（不改状态）—— 原实现 else->OFF 会把任何异常包误判成
+            //   "关闭"，导致真实档位在 1↔5 之间抖动，进而触发面板反复 Q、误下发。
+            else -> null
         }
     }
 }
