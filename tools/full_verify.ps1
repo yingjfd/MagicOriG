@@ -1,4 +1,4 @@
-# MagicOriG 全量验证脚本 —— 设备一回来跑这个
+﻿# MagicOriG 全量验证脚本 —— 设备一回来跑这个
 # 用法: powershell -ExecutionPolicy Bypass -File tools\full_verify.ps1
 param([switch]$SkipInstall)
 $ErrorActionPreference = 'Continue'
