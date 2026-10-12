@@ -87,10 +87,32 @@ object SettingsHeadsetHook : HookContext() {
                     .forEach { m ->
                         m.isAccessible = true
                         module.hook(m).intercept { chain ->
-                            Log.i(TAG, "displayPreference 被调用: ${cls.substringAfterLast('.')}")
-                            chain.proceed()
+                            val ret = chain.proceed()
+                            // ★ 根治：displayPreference 是面板渲染的必经入口。
+                            //   面板显示后延迟查询 current_anc 并应用高亮，
+                            //   完全绕开异步广播链（广播链因荣耀同步反复写入 current_anc
+                            //   导致值可能被污染，直接读 Global 获取纯净的真实值）。
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                runCatching {
+                                    val app = Class.forName("android.app.ActivityThread")
+                                        .getDeclaredMethod("currentApplication").invoke(null) as? android.content.Context
+                                    // ① 读纯净信号（由 AncModeParser 成功解析时写入的真实状态）
+                                    val raw = android.provider.Settings.Global.getString(
+                                        app?.contentResolver, "magicorig_current_anc"
+                                    )
+                                    val status = raw?.toIntOrNull()
+                                    if (status != null) {
+                                        Log.w(TAG, "★★ displayPreference 面板就绪，从 Global 同步高亮: current_anc=$status")
+                                        applyPanelHighlight(status)
+                                    }
+                                    // ② 再主动发一条只读查询，确保耳机最新状态能更新面板
+                                    app?.sendBroadcast(Intent("com.redwind.magicorig.ACTION_REFRESH_STATUS"))
+                                    Log.w(TAG, "★★ displayPreference 已发只读查询刷新状态")
+                                }.onFailure { Log.w(TAG, "displayPreference 同步高亮失败: ${it.javaClass.simpleName}") }
+                            }, 2000L)
+                            ret
                         }
-                        Log.i(TAG, "installed: ${cls.substringAfterLast('.')} displayPreference 观察")
+                        Log.i(TAG, "installed: ${cls.substringAfterLast('.')} displayPreference [渲染入口同步高亮]")
                     }
             }.onFailure {
                 Log.w(TAG, "install ANC failed ${cls.substringAfterLast('.')}: ${it.javaClass.simpleName}: ${it.message}")

@@ -9,12 +9,13 @@
 > The code has not been long-term audited by humans — evaluate the risk yourself;
 > human review and PRs are welcome.
 
-让第三方 SPP 耳机（NickHCK YuanDao OriG in）在荣耀 MagicOS 上**像荣耀自家耳机一样**使用：蓝牙设置详情页与设备中心直接调节降噪、电量显示、控制中心快捷磁贴、断联通知自清。所有降噪参数走已打通的 SPP 协议链路，点击即下发（~50ms）。
+让第三方 SPP 耳机（NickHCK YuanDao OriG in）在荣耀 MagicOS 上**像荣耀自家耳机一样**使用：设备中心直接调节降噪与查看双耳电量、音频切换通知显示电量、控制中心快捷磁贴、断联通知自清。所有降噪参数走已打通的 SPP 协议链路，点击即下发（~50ms）。
 
 An LSPosed module that lets a third-party SPP earbud (**NickHCK YuanDao OriG in**) behave
-like a first-party Honor earbud on MagicOS: adjust ANC right in Bluetooth settings and the
-**device center**, show battery, control it from a Quick Settings tile, and auto-clear the
-notification on disconnect. Every ANC click goes down the verified SPP link (~50ms).
+like a first-party Honor earbud on MagicOS: adjust ANC and see per-ear battery in the
+**device center**, show battery on the audio-switch notification, control it from a Quick
+Settings tile, and auto-clear the notification on disconnect. Every ANC click goes down
+the verified SPP link (~50ms).
 
 ## 为什么做这个模块 / Why
 
@@ -37,7 +38,7 @@ NiceHCK private `0x4E` SPP frames). Net result: a fully capable ANC earbud can o
 
 | 功能 Feature | 说明 Description |
 | --- | --- |
-| 蓝牙设置页降噪面板 / In-settings ANC panel | 强制放开 `NoiseControlController` 显示门槛，三档：**实验性降噪 / 深度降噪 / 普通降噪**（status 5/4/3 → SPP `0x4E` 帧）/ Forces the panel gate open; three gears: experimental / deep / normal ANC |
+| 蓝牙设置页降噪面板 / In-settings ANC panel | **v1.1.5 起已按需求移除并恢复原样**（历史方案：强制放开 `NoiseControlController` 显示门槛）/ Removed per user request in v1.1.5 (stock behavior restored) |
 | 设备中心接入 / Device-center entry | 第三方耳机出现在**设备中心球位**并可开服务卡（11 环注入：列表三出口、球创建、渲染参数、布局 mask、`c2.s.o` 注册表、在线态断根、注入 classloader 修正）/ The bud appears as a device-center ball with a full service card (11-stage injection) |
 | 设备中心降噪按钮 / Device-center ANC buttons | `EarphoneNoiseData.fromBatteryData` 为 null 时注入三模式与当前档位，按钮点亮即用 / Injects supported modes when the stock data is null — buttons light up and work |
 | 下发桥 / Dispatch bridge | `PropertyUtils.setNoiseCtrlMode` 拦截 → 映射为模块 status → 广播 → 蓝牙进程 SPP `0x4E` / Bridges Honor's dispatch into the SPP link |
@@ -50,17 +51,15 @@ NiceHCK private `0x4E` SPP frames). Net result: a fully capable ANC earbud can o
 
 ## 原理 / How it works
 
-### 降噪下发链（蓝牙设置页 / 设备中心 / 磁贴，三入口汇一）
+### 降噪下发链（设备中心 / 磁贴，两入口汇一）
 
 ```
-用户点击 [实验性降噪 / 深度降噪 / 普通降噪]
-  ├─ 设置页: MultiStateSwitchingPanelPreference.onClick
-  │        → NoiseControlPanelController.onMultiStateClicked(index, mode)
+用户点击 [降噪 / 关闭 / 透传]
   ├─ 设备中心: EarphoneNoiseSectionController.onNoiseModeClick(NoiseMode)
   │        → PropertyUtils.setNoiseCtrlMode(deviceId, ncValue, cb)   ← hook 拦截
   └─ 磁贴:   QuickSettingsAncTile.onClick
-        ↓ 统一映射 index/nc → status (5 实验性 / 4 深度 / 3 普通)
-  广播 com.redwind.magicorig.ACTION_ANC_SELECT (status)     [settings/controlcenter 进程]
+        ↓ 统一映射 index/nc → status (降噪=默认档位 / 2 通透 / 1 关闭)
+  广播 com.redwind.magicorig.ACTION_ANC_SELECT (status)     [controlcenter/systemui 进程]
         → RfcommController.setANCMode(status)               [com.android.bluetooth 进程]
         → SPP 0x4E 帧 → 耳机切换 (~50ms)
         例: 实验性降噪 → 4E 05 00 00 01 02 10 00
@@ -114,7 +113,6 @@ onNoiseModeClick                           → 观察点
 
 | 入口 Entry | 位置 Where |
 | --- | --- |
-| 降噪三档 / ANC gears | 蓝牙设置 → 耳机详情页 → 噪声控制 / Bluetooth settings → device detail |
 | 设备中心降噪 / Device-center ANC | 下拉控制中心 → 点编辑 → **拖出「设备中心」到主栏** → 点耳机球 → 噪声控制 / Pull down → edit → drag **Device Center** to the main bar → tap the bud ball |
 | 快捷磁贴 / Quick tile | 控制中心编辑 → 添加 MagicOriG 磁贴 → 循环切换三档 / Control-center edit → add the tile |
 | 管理 App / App | 桌面 MagicOriG 图标（电量、默认档位、自检）/ Home-screen app |
@@ -170,6 +168,13 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.5**（2026-10-12）：**按需求移除蓝牙设置页 hook，该页面恢复系统原样** ——
+  不再强制显示降噪面板、不再干预档位与状态显示（蓝牙设置详情页对第三方耳机
+  回到荣耀原生行为）。作用域同步移除 `com.android.settings`。
+  **保留的功能**：设备中心（耳机球、服务卡、降噪三钮、双耳电量、真实档位显示）、
+  控制中心磁贴、音频切换通知电量、断联自清。
+  Bluetooth-settings hooks removed per request (page back to stock); the device center
+  (ball/card/ANC buttons/per-ear battery), QS tile, notification battery remain.
 * **v1.1.4**（2026-10-11）：修复「进入蓝牙噪声控制页不能自动显示耳机当前状态」——
   两处配合问题：①上次的状态被记在内存里，这次回包同样的值就被当成"重复"跳过了，
   面板重建后自然没有选中；②负责恢复选中的逻辑在面板还没准备好的时候执行会

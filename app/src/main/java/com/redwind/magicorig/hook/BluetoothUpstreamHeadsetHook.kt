@@ -412,23 +412,11 @@ object BluetoothUpstreamHeadsetHook : HookContext() {
     private fun oriGAncFromMiuiMode(mode: Int) = when (mode) { 1 -> 3; 2 -> 2; else -> 1 }
 
     private fun sendOriGAnc(miuiMode: Int) {
-        val newAnc = oriGAncFromMiuiMode(miuiMode)
-        // ★ 根治"过一会自动切降噪"：本函数由荣耀耳机服务的 changeAncMode 触发 ——
-        //   荣耀在**页面加载/状态同步**时也会调它（本意是"应用当前状态"而非用户切换），
-        //   此前把每次调用都转发成真下发 → 进蓝牙页后耳机被自动切到降噪
-        //   （miuiMode=1 → 普通降噪）。现在只同步内部状态，不再转发 ACTION_ANC_SELECT：
-        //   蓝牙页/设备中心/App 各有自己的下发路径，本路径的转发只剩副作用。
-        currentAnc = newAnc
-        Log.w(TAG, "⛔ changeAncMode 转发已抑制（miuiMode=$miuiMode → $newAnc 仅同步状态，不下发）")
-        runCatching {
-            val ctx = context ?: return@runCatching
-            ctx.sendBroadcast(Intent(MagicOriGAction.ACTION_PODS_ANC_CHANGED).apply {
-                putExtra("status", currentAnc)
-                setPackage(ctx.packageName)
-                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-            })
-        }.onFailure { Log.e(TAG, "sendOriGAnc broadcast failed", it) }
-        Log.d(TAG, "sendOriGAnc miuiMode=$miuiMode → origMode=$currentAnc")
+        // ★ 彻底禁止荣耀同步污染：荣耀耳机服务的 changeAncMode 会在页面加载/状态同步时
+        //   被频繁调用（miuiMode=1 → 映射为普通降噪3），但它不代表耳机真实模式。
+        //   它修改 currentAnc 并广播后，Settings 会收到错误状态 → 面板显示与实际不符。
+        //   本路径不反映耳机真实模式，直接忽略。
+        Log.w(TAG, "⛔ changeAncMode 已忽略（miuiMode=$miuiMode，荣耀同步不代表耳机真实状态）")
     }
 
     private fun isOriGPod(device: BluetoothDevice?): Boolean {

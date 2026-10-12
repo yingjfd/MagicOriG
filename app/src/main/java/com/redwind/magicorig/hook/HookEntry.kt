@@ -62,9 +62,11 @@ class HookEntry : XposedModule() {
                 loadHook(BluetoothUpstreamHeadsetHook, param.classLoader, param.packageName)
             }
 
-            // ── 系统设置 ───────────────────────────────────────────────
+            // ── 系统设置 ── 已停用（用户决定：蓝牙设置页 hook 全部移除，恢复原样）────
+            // 保留的降噪入口：设备中心卡片（com.hihonor.controlcenter）。
+            // SettingsHeadsetHook 相关逻辑仍在仓库中可查历史，但不再加载。
             "com.android.settings" -> {
-                loadHook(SettingsHeadsetHook, param.classLoader, param.packageName)
+                Log.i(TAG, "settings scope: 蓝牙设置页 hook 已按需求停用（恢复原样）")
             }
 
             // ── 音频切换（荣耀媒体输出/SWS 耳机服务）── 通知电量追加 ─────
