@@ -59,7 +59,7 @@ NiceHCK private `0x4E` SPP frames). Net result: a fully capable ANC earbud can o
   │        → PropertyUtils.setNoiseCtrlMode(deviceId, ncValue, cb)   ← hook 拦截
   └─ 磁贴:   QuickSettingsAncTile.onClick
         ↓ 统一映射 index/nc → status (降噪=默认档位 / 2 通透 / 1 关闭)
-  广播 com.redwind.magicorig.ACTION_ANC_SELECT (status)     [controlcenter/systemui 进程]
+  广播 io.github.yingjfd.magicorgin.ACTION_ANC_SELECT (status)     [controlcenter/systemui 进程]
         → RfcommController.setANCMode(status)               [com.android.bluetooth 进程]
         → SPP 0x4E 帧 → 耳机切换 (~50ms)
         例: 实验性降噪 → 4E 05 00 00 01 02 10 00
@@ -152,14 +152,14 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 │   ├── java_init.list         # 现代 libxposed 入口 / modern entry (HookEntry)
 │   ├── module.prop            # min/targetApiVersion（缺 targetApiVersion 会让 LSPosed 列表 NPE）
 │   └── scope.list             # 推荐作用域 6 包 / recommended scopes
-├── app/src/main/java/com/redwind/magicorig/hook/
+├── app/src/main/java/io/github/yingjfd/magicorgin/hook/
 │   ├── HookEntry.kt           # 按包分发 / per-package dispatch
 │   ├── SettingsHeadsetHook.kt # 设置页降噪面板 + 档位记忆 + skipAncDispatch
 │   ├── ControlCenterNoiseHook.kt  # 设备中心 11 环注入 / device-center injection
 │   ├── RfcommController.kt    # SPP 0x4E 收发 + 电量/ANC 广播桥 (bluetooth 进程)
 │   ├── QuickSettingsAncTile.kt    # 控制中心磁贴 / QS tile
 │   └── MediaSwsBatteryHook.kt # 音频切换通知电量追加
-├── app/src/main/java/com/redwind/magicorig/ui/
+├── app/src/main/java/io/github/yingjfd/magicorgin/ui/
 │   ├── App.kt                 # Material3 首页/关于 / M3 pages
 │   └── Theme.kt               # M3 明暗配色 / light & dark schemes
 ├── docs/magicos11-integration.md   # 完整逆向文档 / full RE notes

@@ -13,11 +13,11 @@ plugins {
 val releaseKeystore = file("signing/magicorig.jks")
 
 android {
-    namespace = "com.redwind.magicorig"
+    namespace = "io.github.yingjfd.magicorgin"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.redwind.magicorig"
+        applicationId = "io.github.yingjfd.magicorgin"
         minSdk = 34   // Android 14 (MagicOS 8 / HarmonyOS NEXT)
         targetSdk = 35
         versionCode = 100016

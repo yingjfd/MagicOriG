@@ -1234,7 +1234,7 @@ setOrder(410)
        tag=view.getTag() → index ; item=a.get(index) ; mode=$b.a(item):B
        → this.Q(mode) ; cb.onMultiStateClicked(index, mode)
   → NoiseControlPanelController.onMultiStateClicked(int, byte)   ← 接口 $a 的实现类
-  → 广播 com.redwind.magicorig.ACTION_ANC_SELECT (status)
+  → 广播 io.github.yingjfd.magicorgin.ACTION_ANC_SELECT (status)
   → [bluetooth 进程] RfcommController.safeHandleBroadcast
   → safeHandleUIEvent → setANCMode(status)
   → Enums.ANC_* → sendPacketSafe → SPP 0x4E 帧 → 耳机切换
@@ -1550,7 +1550,7 @@ createSections 三道门：
 ```
 Exception in hooker
 java.lang.ClassNotFoundException: ...EarphoneNoiseData$NoiseMode
-  on path: DexPathList[[... com.redwind.magicorig-XXX/base.apk ...]]
+  on path: DexPathList[[... io.github.yingjfd.magicorgin-XXX/base.apk ...]]
 ```
 
 `fromBatteryData` 注入里 `Class.forName(MODE_CLS)` **默认走模块自身 ClassLoader**

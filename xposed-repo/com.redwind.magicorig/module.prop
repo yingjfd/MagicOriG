@@ -1,0 +1,6 @@
+name=MagicOriG
+description=让原道 OriG in 耳机在荣耀 MagicOS 上像自家耳机一样使用：设备中心调节降噪 + 双耳电量 + 控制中心磁贴
+minApiVersion=101
+targetApiVersion=102
+staticScope=true
+autoHotReload=false
