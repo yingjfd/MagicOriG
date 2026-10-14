@@ -168,6 +168,11 @@ Build: Gradle 8.9 + AGP 8.5.2 + Kotlin 2.0.21 (JDK 21), output under
 
 ## 版本历史 / Changelog
 
+* **v1.1.7**（2026-10-14）：**应用有了专属图标**（此前用系统蓝牙图标）—— 自适应图标
+  （Android 8+ 圆形/圆角自动适配）+ 5 档密度 mipmap + 磁贴同步使用。另完成官方
+  Xposed 模块仓库上架（`io.github.yingjfd.magicorgin`）。
+  Dedicated adaptive app icon (5 densities + monochrome); also listed on the official
+  Xposed-Modules-Repo.
 * **v1.1.5**（2026-10-12）：**按需求移除蓝牙设置页 hook，该页面恢复系统原样** ——
   不再强制显示降噪面板、不再干预档位与状态显示（蓝牙设置详情页对第三方耳机
   回到荣耀原生行为）。作用域同步移除 `com.android.settings`。
