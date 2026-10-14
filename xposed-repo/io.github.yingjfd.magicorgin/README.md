@@ -16,7 +16,7 @@
 
 ## 下载
 
-[MagicOriG-v1.1.6.apk](https://github.com/yingjfd/MagicOriG/releases/download/v1.1.6/MagicOriG-v1.1.6.apk)
+[MagicOriG-v1.1.8.apk](https://github.com/yingjfd/MagicOriG/releases/download/v1.1.8/MagicOriG-v1.1.8.apk)
 
 所有版本见 [Releases](https://github.com/yingjfd/MagicOriG/releases)。
 
