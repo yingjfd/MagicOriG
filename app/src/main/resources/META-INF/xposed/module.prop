@@ -1,5 +1,5 @@
 name=MagicOriG
-description=NickHCK YuanDao OriG in earbuds integration for MagicOS
+description=Honor MagicOS integration for NickHCK YuanDao OriG in earbuds: device-center ANC + per-ear battery + Quick Settings tile
 minApiVersion=101
 # LSPosed: targetVersion = extractIntPart(prop.getProperty("targetApiVersion"))
 # 缺少此键时 extractIntPart(null) 抛 NPE，且构造函数只 catch IOException/OOM，

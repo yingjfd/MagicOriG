@@ -1,5 +1,5 @@
 name=MagicOriG
-description=让原道 OriG in 耳机在荣耀 MagicOS 上像自家耳机一样使用：设备中心调节降噪 + 双耳电量 + 控制中心磁贴
+description=Honor MagicOS integration for NickHCK YuanDao OriG in earbuds: device-center ANC + per-ear battery + Quick Settings tile
 minApiVersion=101
 targetApiVersion=102
 staticScope=true
